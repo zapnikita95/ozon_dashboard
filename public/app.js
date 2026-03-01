@@ -110,8 +110,7 @@ function getPeriod() {
 }
 
 // ——— Navigation ———
-function bootstrap() {
-  document.querySelectorAll('.nav-item').forEach((btn) => {
+document.querySelectorAll('.nav-item').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
     document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
@@ -1058,10 +1057,8 @@ function runInit() {
     console.error('Ozon Dashboard init error:', err);
   }
 }
-  runInit();
-}
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', bootstrap);
+  document.addEventListener('DOMContentLoaded', runInit);
 } else {
-  bootstrap();
+  runInit();
 }
