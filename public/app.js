@@ -543,9 +543,22 @@ async function loadSalesSection() {
   try {
     await loadFinanceSummary();
     await loadSales();
+    updateOrdersInDelivery();
   } catch (e) {
     console.error('loadSalesSection error:', e);
     showToast('Ошибка загрузки раздела', 'error');
+  }
+}
+
+async function updateOrdersInDelivery() {
+  const el = document.getElementById('header-orders-in-delivery');
+  if (!el) return;
+  try {
+    const r = await fetch(API + '/orders-in-delivery?' + '_=' + Date.now()).then((x) => x.json()).catch(() => ({}));
+    const n = r.count != null ? Number(r.count) : NaN;
+    el.innerHTML = 'Заказов в доставке: <strong>' + (Number.isNaN(n) ? '—' : n) + '</strong>';
+  } catch (e) {
+    el.innerHTML = 'Заказов в доставке: <strong>—</strong>';
   }
 }
 
@@ -1079,7 +1092,8 @@ function formatMoney(v) {
 // Init — после готовности DOM, чтобы кнопки и секции точно были в документе
 function runInit() {
   try {
-    if (!restoreDashboardState()) setPeriodDates();
+    restoreDashboardState();
+    setPeriodDates();
     saveDashboardState();
 
     const savedSection = (typeof localStorage !== 'undefined' && localStorage.getItem(SECTION_KEY)) || 'sales';
@@ -1110,6 +1124,7 @@ function runInit() {
     } else {
       loadSalesSection();
     }
+    updateOrdersInDelivery();
 
     bindTableSort('orders-table');
     bindTableSort('ad-codes-table');

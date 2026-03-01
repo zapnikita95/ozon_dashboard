@@ -407,6 +407,36 @@ app.get('/api/posting/:postingNumber', async (req, res) => {
   }
 });
 
+/** Количество заказов в доставке (ещё не получена оплата, не отменён, не возврат). */
+app.get('/api/orders-in-delivery', (req, res) => {
+  const sales = readJson('sales.json', []);
+  const overrides = readJson('payout_overrides.json', {});
+  const postings = readJson('postings.json', []);
+  const paid = new Set();
+  sales.forEach((s) => {
+    const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
+    if (amt <= 0) return;
+    const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
+    if (pn && String(pn).includes('-')) paid.add(String(pn));
+  });
+  const exclude = (status, substatus, cancellation) => {
+    if (cancellation != null && typeof cancellation === 'object') return true;
+    const s = (status || '').toLowerCase();
+    const sub = (substatus || '').toLowerCase();
+    if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
+    return false;
+  };
+  let count = 0;
+  postings.forEach((p) => {
+    const num = p.posting_number || p.id;
+    if (!num || !String(num).includes('-')) return;
+    if (paid.has(String(num))) return;
+    if (exclude(p.status, p.substatus, p.cancellation)) return;
+    count++;
+  });
+  res.json({ count });
+});
+
 app.get('/api/postings', async (req, res) => {
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';

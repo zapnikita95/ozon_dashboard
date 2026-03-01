@@ -43,6 +43,14 @@ body {
   justify-content: center;
   width: var(--sidebar-w);
 }
+.header-orders-in-delivery {
+  justify-self: end;
+  padding-right: 24px;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.header-orders-in-delivery strong { color: var(--text); }
 .logo { font-size: 1.25rem; font-weight: 600; margin: 0; }
 .logo-img { display: block; max-height: 40px; width: auto; object-fit: contain; }
 
