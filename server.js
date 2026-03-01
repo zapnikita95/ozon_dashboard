@@ -60,18 +60,6 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
-// CORS для POST /api/data/import: с локалхоста можно отправить данные на прод (один источник правды).
-app.use('/api/data/import', (req, res, next) => {
-  const origin = req.get('Origin');
-  if (origin && (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /railway|ozondashboard/.test(origin))) {
-    res.set('Access-Control-Allow-Origin', origin);
-    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
-  }
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
-
 // ——— Products ———
 app.get('/api/products', async (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -338,7 +326,6 @@ app.get('/api/sales/chart-data', (req, res) => {
   });
 
   const byDay = {};
-  const potentialAlreadyFromSales = new Set();
   list.forEach((s) => {
     const dOp = toD(s.date || s.operation_date || s.created_at);
     const dDel = toD(s.delivery_date || s.date || s.operation_date || s.created_at);
@@ -369,18 +356,9 @@ app.get('/api/sales/chart-data', (req, res) => {
         byDay[dAttr].consumables += cost;
       }
     }
-    const potentialOp = Number(s.potential_amount ?? 0);
-    const isReturn = (s.type || '').toString().toLowerCase() === 'returns' || /возврат|return/.test(String(s.operation_type_name || s.operation_type || '').toLowerCase());
-    if (potentialOp > 0 && !isReturn) {
-      const hasPn = pn && String(pn).includes('-');
-      if (!hasPn || !potentialAlreadyFromSales.has(String(pn))) {
-        byDay[dOp].potential += potentialOp;
-        if (hasPn) potentialAlreadyFromSales.add(String(pn));
-      }
-    }
   });
 
-  // Потенциальная прибыль по заказам из postings: только те, что ещё НЕ учтены в sales (чтобы не дублировать 2353+2353=4706)
+  // Потенциальная прибыль — ТОЛЬКО из postings: каждый постинг один раз, без возвратов и уже оплаченных
   const paidPostingNumbers = new Set();
   list.forEach((s) => {
     const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
@@ -388,20 +366,19 @@ app.get('/api/sales/chart-data', (req, res) => {
     const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
     if (pn && String(pn).includes('-')) paidPostingNumbers.add(String(pn));
   });
-  const excludeStatusForPotential = (status, substatus, cancellation) => {
-    const s = (status || '').toLowerCase();
-    const sub = (substatus || '').toLowerCase();
-    if (cancellation != null && typeof cancellation === 'object') return true;
-    if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
+  const isExcludedForPotential = (p) => {
+    if (p.cancellation != null && typeof p.cancellation === 'object') return true;
+    const status = String(p.status || '').toLowerCase();
+    const substatus = String(p.substatus || '').toLowerCase();
+    if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(status) || /cancel|отмен|return|возврат|arbitration/.test(substatus)) return true;
+    if (String(p.type || '').toLowerCase() === 'returns') return true;
     return false;
   };
   postings.forEach((p) => {
     const num = p.posting_number || p.id;
     if (!num || !String(num).includes('-')) return;
     if (paidPostingNumbers.has(String(num))) return;
-    if (potentialAlreadyFromSales.has(String(num))) return;
-    if (excludeStatusForPotential(p.status, p.substatus, p.cancellation)) return;
-    if (String(p.type || '').toLowerCase() === 'returns') return;
+    if (isExcludedForPotential(p)) return;
     const potential = Number(p.potential_amount ?? 0);
     if (potential <= 0) return;
     const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
@@ -758,29 +735,6 @@ app.put('/api/sales/:id/payout', (req, res) => {
   overrides[req.params.id] = req.body.actual_payout_rub;
   writeJson('payout_overrides.json', overrides);
   res.json({ ok: true });
-});
-
-/** Скачать все данные (sales + postings) для переноса на прод. */
-app.get('/api/data/export', (req, res) => {
-  const data = {
-    sales: readJson('sales.json', []),
-    postings: readJson('postings.json', []),
-  };
-  res.setHeader('Content-Disposition', 'attachment; filename=ozon-dashboard-data.json');
-  res.json(data);
-});
-
-/** Загрузить данные на прод (заменить sales.json и postings.json). Тело: { sales?: [], postings?: [] }. */
-app.post('/api/data/import', (req, res) => {
-  try {
-    const body = req.body || {};
-    if (Array.isArray(body.sales)) writeJson('sales.json', body.sales);
-    if (Array.isArray(body.postings)) writeJson('postings.json', body.postings);
-    res.json({ ok: true, sales: body.sales?.length ?? 0, postings: body.postings?.length ?? 0 });
-  } catch (e) {
-    console.error('data/import:', e.message);
-    res.status(400).json({ ok: false, error: e.message });
-  }
 });
 
 /** Подтянуть состав заказов (items) по всем продажам без items — для корректного расчёта остатков расходников. */
