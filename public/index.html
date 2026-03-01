@@ -163,11 +163,9 @@
 
     <!-- Себестоимость -->
     <section id="section-costs" class="section">
-      <div class="cards single">
-        <div class="card">
-          <span class="card-label">Стоимость товаров на складе</span>
-          <span class="card-value" id="cost-total">—</span>
-        </div>
+      <div class="table-block">
+        <h3>Остатки избранных расходников <span class="tooltip-trigger" title="Помеченные звёздочкой расходники — остаток показывается здесь">?</span></h3>
+        <div id="starred-remainders" class="starred-remainders"></div>
       </div>
       <div class="table-block">
         <h3>Титульные карточки (расходники по типам)</h3>
@@ -185,10 +183,12 @@
           <table class="data-table" id="expense-items-table">
             <thead>
               <tr>
+                <th style="width:40px"></th>
                 <th>Название</th>
                 <th>Стоимость (₽)</th>
                 <th>Кол-во в закупке</th>
                 <th>Ед. изм.</th>
+                <th>Остаток</th>
                 <th></th>
               </tr>
             </thead>

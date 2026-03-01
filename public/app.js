@@ -296,7 +296,22 @@ document.getElementById('btn-export-excel').addEventListener('click', () => {
 // ——— Costs section ———
 async function loadCostsSection() {
   const r = await fetch(API + '/costs').then((x) => x.json()).catch(() => ({ items: [], total_value: 0 }));
-  document.getElementById('cost-total').textContent = formatMoney(r.total_value);
+
+  const expenses = await fetch(API + '/expense-items').then((x) => x.json()).catch(() => []);
+  const starred = expenses.filter((e) => e.starred);
+  const starredEl = document.getElementById('starred-remainders');
+  if (starredEl) {
+    if (starred.length === 0) {
+      starredEl.innerHTML = '<p class="hint">Пометьте расходники звёздочкой в таблице ниже — их остатки появятся здесь.</p>';
+    } else {
+      starredEl.innerHTML = starred.map((e) => `
+        <div class="remainder-card">
+          <div class="remainder-name">${e.name}</div>
+          <div class="remainder-value">${e.remaining != null && e.remaining !== '' ? Number(e.remaining) : '—'} ${e.unit || 'шт'}</div>
+        </div>
+      `).join('');
+    }
+  }
 
   const byPreset = await fetch(API + '/costs/by-preset').then((x) => x.json()).catch(() => []);
   const cardsEl = document.getElementById('preset-cards');
@@ -310,7 +325,7 @@ async function loadCostsSection() {
 
   const presets = await fetch(API + '/product-type-presets').then((x) => x.json()).catch(() => []);
   const presetListEl = document.getElementById('preset-list');
-  presetListEl.innerHTML = presets.map((p) => `<li>${p.name} <button type="button" class="btn btn-small btn-secondary" data-delete-preset="${p.id}">Удалить</button></li>`).join('');
+  presetListEl.innerHTML = presets.map((p) => `<li><span class="preset-name">${p.name}</span> <button type="button" class="btn btn-small btn-secondary" data-delete-preset="${p.id}">Удалить</button></li>`).join('');
   presetListEl.querySelectorAll('[data-delete-preset]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       await fetch(API + '/product-type-presets/' + btn.dataset.deletePreset, { method: 'DELETE' });
@@ -322,16 +337,35 @@ async function loadCostsSection() {
   const tbody = document.getElementById('expense-tbody');
   tbody.innerHTML = expenses.map((e) => `
     <tr>
+      <td><button type="button" class="expense-star ${e.starred ? 'starred' : ''}" data-id="${e.id}" aria-label="${e.starred ? 'Убрать из избранного' : 'Показать остаток наверху'}">${e.starred ? '★' : '☆'}</button></td>
       <td>${e.name}</td>
       <td>${e.cost}</td>
       <td>${e.quantity ?? 1}</td>
       <td>${e.unit || 'шт'}</td>
+      <td><input type="number" min="0" step="1" data-id="${e.id}" data-field="remaining" value="${e.remaining != null && e.remaining !== '' ? e.remaining : ''}" placeholder="—" style="width:70px"></td>
       <td><button type="button" class="btn btn-small btn-secondary" data-delete-expense="${e.id}">Удалить</button></td>
     </tr>
   `).join('');
   tbody.querySelectorAll('[data-delete-expense]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       await fetch(API + '/expense-items/' + btn.dataset.deleteExpense, { method: 'DELETE' });
+      loadCostsSection();
+    });
+  });
+  tbody.querySelectorAll('.expense-star').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const e = expenses.find((x) => x.id === btn.dataset.id);
+      if (!e) return;
+      await fetch(API + '/expense-items/' + e.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: !e.starred }) });
+      loadCostsSection();
+    });
+  });
+  tbody.querySelectorAll('input[data-field="remaining"]').forEach((inp) => {
+    inp.addEventListener('change', async () => {
+      const e = expenses.find((x) => x.id === inp.dataset.id);
+      if (!e) return;
+      const val = inp.value === '' ? null : parseFloat(inp.value);
+      await fetch(API + '/expense-items/' + e.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ remaining: val }) });
       loadCostsSection();
     });
   });

@@ -138,10 +138,16 @@ body {
   background: var(--panel);
   border-radius: var(--radius);
   padding: 20px;
-  margin-bottom: 24px;
   box-shadow: var(--shadow);
   border: 1px solid var(--border);
 }
+.section .table-block { margin-top: 32px; }
+.section .table-block:first-of-type,
+.section .chart-block:first-of-type,
+.section .expense-structure:first-of-type { margin-top: 0; }
+.section .chart-block,
+.section .expense-structure { margin-bottom: 32px; }
+.section .table-block:last-child { margin-bottom: 24px; }
 .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .chart-header h3, .expense-structure h3, .table-block h3 { margin: 0 0 16px; font-size: 1.1rem; }
 .chart-wrap { height: 320px; position: relative; }
@@ -225,14 +231,33 @@ body {
 .hint { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; }
 #description-text { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-family: inherit; resize: vertical; }
 
-.preset-list { list-style: none; padding: 0; margin: 0 0 16px; }
-.preset-list li { padding: 6px 0; display: flex; align-items: center; gap: 8px; }
+.preset-list { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 8px; }
+.preset-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.preset-list li .preset-name { font-weight: 500; }
+.preset-list li .btn { flex-shrink: 0; }
 .preset-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .preset-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
 .preset-card h4 { margin: 0 0 12px; font-size: 1rem; }
 .preset-card ul { margin: 0; padding: 0; list-style: none; font-size: 0.9rem; color: var(--text-muted); }
 .preset-card ul li { padding: 4px 0; }
 .preset-card .total { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); font-weight: 700; }
+
+.starred-remainders { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 0; }
+.starred-remainders .remainder-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.starred-remainders .remainder-card .remainder-name { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
+.starred-remainders .remainder-card .remainder-value { font-size: 1.25rem; font-weight: 700; color: var(--accent); }
+.expense-star { cursor: pointer; font-size: 1.2rem; border: none; background: none; padding: 4px; line-height: 1; color: var(--text-muted); }
+.expense-star:hover { color: var(--accent); }
+.expense-star.starred { color: #eab308; }
 
 @media (max-width: 900px) {
   .cards { grid-template-columns: repeat(2, 1fr); }
