@@ -491,7 +491,13 @@ function buildChart(data) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+        },
+      },
       scales: {
         y: {
           position: 'left',

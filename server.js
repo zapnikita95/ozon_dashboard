@@ -335,7 +335,7 @@ app.get('/api/sales/chart-data', (req, res) => {
     byDay[dOp].potential += Number(s.potential_amount ?? 0);
   });
 
-  // Потенциальная прибыль по заказам из postings: заказы, по которым ещё не поступила оплата в sales
+  // Потенциальная прибыль по заказам из postings: заказы, по которым ещё не поступила оплата в sales; без отменённых и возвратов
   const paidPostingNumbers = new Set();
   list.forEach((s) => {
     const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
@@ -343,10 +343,18 @@ app.get('/api/sales/chart-data', (req, res) => {
     const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
     if (pn && String(pn).includes('-')) paidPostingNumbers.add(String(pn));
   });
+  const excludeStatusForPotential = (status, substatus, cancellation) => {
+    const s = (status || '').toLowerCase();
+    const sub = (substatus || '').toLowerCase();
+    if (cancellation != null && typeof cancellation === 'object') return true;
+    if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
+    return false;
+  };
   postings.forEach((p) => {
     const num = p.posting_number || p.id;
     if (!num || !String(num).includes('-')) return;
     if (paidPostingNumbers.has(String(num))) return;
+    if (excludeStatusForPotential(p.status, p.substatus, p.cancellation)) return;
     const potential = Number(p.potential_amount ?? 0);
     if (potential <= 0) return;
     const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
@@ -456,8 +464,12 @@ app.post('/api/postings/sync', async (req, res) => {
       try {
         const detail = await ozon.getPostingByNumber(num);
         if (detail) {
+          const res = detail.result || {};
           rec.potential_amount = Number(detail.sum) > 0 ? detail.sum : (byPostingNum.get(String(num))?.potential_amount ?? undefined);
-          const prods = detail.result?.products || detail.products || [];
+          if (res.status != null) rec.status = res.status;
+          if (res.substatus != null) rec.substatus = res.substatus;
+          if (res.cancellation != null) rec.cancellation = res.cancellation;
+          const prods = res.products || detail.products || [];
           if (Array.isArray(prods) && prods.length) rec.products = prods.map((x) => ({
             offer_id: x.offer_id != null ? String(x.offer_id) : '',
             product_id: x.product_id != null ? String(x.product_id) : '',
@@ -1229,7 +1241,7 @@ app.get('/api/finance-summary', (req, res) => {
     expenses: totalExpenses,
     ad_spend,
     taxes,
-    margin_percent: received ? ((netProfit / received) * 100).toFixed(1) : 0,
+    margin_percent: (total_gross != null && Number(total_gross) > 0) ? ((netProfit / total_gross) * 100).toFixed(1) : 0,
   });
 });
 
