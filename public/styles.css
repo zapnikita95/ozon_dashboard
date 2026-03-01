@@ -78,7 +78,7 @@ body {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -221,7 +221,33 @@ body {
   font-size: 0.9rem;
 }
 .data-table th, .data-table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
-.data-table th.th-center, .data-table td.td-actions { text-align: center; }
+.data-table th.th-center, .data-table td.td-actions, .data-table td.td-center { text-align: center; }
+.data-table th.th-filter { cursor: pointer; position: relative; }
+.data-table th.th-filter .filter-arrow { font-size: 0.7em; opacity: 0.7; }
+.th-filter-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 10;
+  min-width: 160px;
+  padding: 6px 0;
+}
+.th-filter-dropdown button {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.th-filter-dropdown button:hover { background: var(--bg); }
 .data-table td.td-actions { vertical-align: middle; }
 .data-table th { font-weight: 600; color: var(--text-muted); cursor: pointer; user-select: none; }
 .data-table th:hover { color: var(--text); }

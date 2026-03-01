@@ -26,6 +26,18 @@
     <section id="section-sales" class="section active">
       <div class="cards">
         <div class="card">
+          <span class="card-label">Общая сумма</span>
+          <span class="card-value card-value-tooltip" id="card-total-gross" title="Сумма всех товаров до вычета (доход от заказов до комиссий и расходов)">—</span>
+        </div>
+        <div class="card">
+          <span class="card-label">Расходы итого</span>
+          <span class="card-value card-value-tooltip" id="card-expenses" title="Сумма всех расходов: комиссия и логистика Ozon, реклама, себестоимость">—</span>
+        </div>
+        <div class="card">
+          <span class="card-label">Из них рекламные</span>
+          <span class="card-value card-value-tooltip" id="card-ad" title="Расходы на рекламу по типам операций и разовые кампании">—</span>
+        </div>
+        <div class="card">
           <span class="card-label">Получено</span>
           <span class="card-value card-value-tooltip" id="card-received" title="Сумма, которую Озон перевёл на ваш счёт за период">—</span>
         </div>
@@ -33,21 +45,16 @@
           <span class="card-label">Чистая прибыль</span>
           <span class="card-value card-value-tooltip" id="card-net" title="Деньги на счёте за вычетом рекламы, расходников и налогов">—</span>
         </div>
-        <div class="card">
-          <span class="card-label">Расходы</span>
-          <span class="card-value card-value-tooltip" id="card-expenses" title="Сумма всех расходов: комиссия и логистика Ozon, реклама, себестоимость">—</span>
-        </div>
-        <div class="card">
-          <span class="card-label">Реклама</span>
-          <span class="card-value card-value-tooltip" id="card-ad" title="Расходы на рекламу по типам операций и разовые кампании">—</span>
-        </div>
       </div>
       <div class="toolbar">
         <div class="period">
           <select id="period-preset">
-            <option value="week">Неделя</option>
-            <option value="month" selected>Месяц</option>
-            <option value="quarter">Квартал</option>
+            <option value="current_week">Текущая неделя</option>
+            <option value="last_week">Прошлая неделя</option>
+            <option value="current_month" selected>Текущий месяц</option>
+            <option value="last_month">Прошлый месяц</option>
+            <option value="30days">30 дней</option>
+            <option value="90days">90 дней</option>
           </select>
           <input type="date" id="date-from" aria-label="Дата с">
           <input type="date" id="date-to" aria-label="Дата по">
@@ -153,6 +160,8 @@
                 <th data-sort="name">Товар</th>
                 <th data-sort="sku">SKU</th>
                 <th data-sort="qty">Кол-во</th>
+                <th data-sort="expected">Ожидаемая стоимость (₽)</th>
+                <th class="th-filter" id="sold-goods-delivered-th">Доставлено <span class="filter-arrow">▼</span></th>
               </tr>
             </thead>
             <tbody id="sold-goods-tbody"></tbody>

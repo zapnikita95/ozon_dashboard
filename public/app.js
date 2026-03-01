@@ -48,11 +48,54 @@ function setPeriodDates() {
   const preset = presetEl.value;
   const to = new Date();
   let from = new Date();
-  if (preset === 'week') from.setDate(from.getDate() - 7);
-  else if (preset === 'month') from.setMonth(from.getMonth() - 1);
-  else if (preset === 'quarter') from.setMonth(from.getMonth() - 3);
-  fromEl.value = from.toISOString().slice(0, 10);
-  toEl.value = to.toISOString().slice(0, 10);
+  const y = to.getFullYear(), m = to.getMonth(), d = to.getDate();
+  const lastDay = (x, mo) => new Date(x, mo + 1, 0).getDate();
+  switch (preset) {
+    case 'current_week': {
+      const day = to.getDay();
+      const monOffset = day === 0 ? -6 : 1 - day;
+      from = new Date(y, m, d + monOffset);
+      toEl.value = to.toISOString().slice(0, 10);
+      fromEl.value = from.toISOString().slice(0, 10);
+      break;
+    }
+    case 'last_week': {
+      const day = to.getDay();
+      const monOffset = day === 0 ? -6 : 1 - day;
+      const thisMon = new Date(y, m, d + monOffset);
+      from = new Date(thisMon);
+      from.setDate(from.getDate() - 7);
+      const endLast = new Date(thisMon);
+      endLast.setDate(endLast.getDate() - 1);
+      fromEl.value = from.toISOString().slice(0, 10);
+      toEl.value = endLast.toISOString().slice(0, 10);
+      break;
+    }
+    case 'current_month':
+      from = new Date(y, m, 1);
+      toEl.value = to.toISOString().slice(0, 10);
+      fromEl.value = from.toISOString().slice(0, 10);
+      break;
+    case 'last_month':
+      from = new Date(y, m - 1, 1);
+      const toLast = new Date(y, m, 0);
+      fromEl.value = from.toISOString().slice(0, 10);
+      toEl.value = toLast.toISOString().slice(0, 10);
+      break;
+    case '30days':
+      from.setDate(from.getDate() - 30);
+      fromEl.value = from.toISOString().slice(0, 10);
+      toEl.value = to.toISOString().slice(0, 10);
+      break;
+    case '90days':
+      from.setDate(from.getDate() - 90);
+      fromEl.value = from.toISOString().slice(0, 10);
+      toEl.value = to.toISOString().slice(0, 10);
+      break;
+    default:
+      fromEl.value = from.toISOString().slice(0, 10);
+      toEl.value = to.toISOString().slice(0, 10);
+  }
 }
 
 function getPeriod() {
@@ -112,6 +155,7 @@ async function loadFinanceSummary() {
   const q = new URLSearchParams({ date_from, date_to });
   const r = await fetch(API + '/finance-summary?' + q).then((x) => x.json()).catch(() => ({}));
   const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  set('card-total-gross', formatMoney(r.total_gross));
   set('card-received', formatMoney(r.received));
   set('card-net', formatMoney(r.net_profit));
   set('card-expenses', formatMoney(r.expenses));
@@ -190,6 +234,7 @@ async function loadSales() {
   buildChart(list);
   loadSalesGroupedView();
   loadSoldGoods();
+  bindSoldGoodsDeliveredFilter();
   return list;
 }
 
@@ -261,9 +306,11 @@ async function loadSalesGroupedView() {
 
 async function loadSoldGoods() {
   const { date_from, date_to } = getPeriod();
+  const deliveredFilter = document.getElementById('sold-goods-delivered-th')?.dataset?.filter || 'all';
   const q = new URLSearchParams();
   if (date_from) q.set('date_from', date_from);
   if (date_to) q.set('date_to', date_to);
+  if (deliveredFilter !== 'all') q.set('delivered', deliveredFilter);
   const list = await fetch(API + '/sales/sold-goods?' + q).then((r) => r.json()).catch(() => []);
   const tbody = document.getElementById('sold-goods-tbody');
   if (!tbody) return;
@@ -274,10 +321,43 @@ async function loadSoldGoods() {
       <td>${row.product_name || '—'}</td>
       <td>${row.sku ?? '—'}</td>
       <td>${row.quantity ?? 1}</td>
+      <td>${row.expected_cost != null ? formatMoney(row.expected_cost) : '—'}</td>
+      <td class="td-center">${row.delivered ? '✓' : ''}</td>
     </tr>
   `).join('');
   const dateThSold = document.querySelector('#sold-goods-table thead th[data-sort="date"]');
   if (dateThSold) { dateThSold.classList.add('sort-desc'); document.querySelectorAll('#sold-goods-table thead th[data-sort]').forEach((h) => { if (h !== dateThSold) h.classList.remove('sort-desc'); }); }
+}
+
+function bindSoldGoodsDeliveredFilter() {
+  const th = document.getElementById('sold-goods-delivered-th');
+  if (!th || th.dataset.bound) return;
+  th.dataset.bound = '1';
+  th.onclick = (e) => {
+    e.stopPropagation();
+    const existing = document.querySelector('.th-filter-dropdown');
+    if (existing) { existing.remove(); return; }
+    const current = th.dataset.filter || 'all';
+    const menu = document.createElement('div');
+    menu.className = 'th-filter-dropdown';
+    const labels = { all: 'Все', yes: 'Доставленные', no: 'Не доставленные' };
+    ['all', 'yes', 'no'].forEach((val) => {
+      const btn = document.createElement('button');
+      btn.textContent = labels[val];
+      if (current === val) btn.style.fontWeight = '600';
+      btn.onclick = () => {
+        th.dataset.filter = val;
+        menu.remove();
+        loadSoldGoods();
+      };
+      menu.appendChild(btn);
+    });
+    th.appendChild(menu);
+    document.addEventListener('click', function close() {
+      document.removeEventListener('click', close);
+      menu.remove();
+    }, { once: true });
+  };
 }
 
 function buildChart(sales) {
@@ -296,6 +376,7 @@ function buildChart(sales) {
   const receivedData = labels.map((d) => byDay[d].received);
   const amountData = labels.map((d) => byDay[d].amount);
   const ordersData = labels.map((d) => byDay[d].orders);
+  const ordersBarsData = labels.map((d) => Math.max(0, byDay[d].orders));
   const potentialData = labels.map((d) => byDay[d].potential);
 
   const legendContainer = document.getElementById('chart-legend');
@@ -304,7 +385,7 @@ function buildChart(sales) {
     { id: 'received', label: 'Фактически получено', data: receivedData, borderColor: '#27272a', backgroundColor: 'rgba(39,39,42,0.08)', hidden: false, type: 'line' },
     { id: 'amount', label: 'Сумма по Ozon', data: amountData, borderColor: '#71717a', backgroundColor: 'rgba(113,113,122,0.08)', hidden: false, type: 'line' },
     { id: 'potential', label: 'Потенциальная прибыль', data: potentialData, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.08)', hidden: false, type: 'line' },
-    { id: 'orders', label: 'Заказов (шт)', data: ordersData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.35)', hidden: false, yAxisID: 'y1', type: 'bar' },
+    { id: 'orders', label: 'Заказов (шт)', data: ordersBarsData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.35)', hidden: false, yAxisID: 'y1', type: 'bar' },
   ];
 
   legendContainer.innerHTML = datasets.map((d) => `<span data-id="${d.id}" class="chart-legend-item">${d.label}</span>`).join('');
@@ -321,7 +402,7 @@ function buildChart(sales) {
   const minY = allMoney.length ? Math.min(0, ...allMoney) : 0;
   const maxY = allMoney.length ? Math.max(0, ...allMoney) : 1;
   const rangeY = maxY - minY || 1;
-  const maxY1 = Math.max(1, ...ordersData);
+  const maxY1 = Math.max(1, ...ordersBarsData);
   const minY1 = maxY1 * minY / rangeY;
 
   if (chartInstance) chartInstance.destroy();
@@ -339,6 +420,7 @@ function buildChart(sales) {
         backgroundColor: d.backgroundColor,
         fill: d.type === 'line',
         yAxisID: d.yAxisID || 'y',
+        base: d.type === 'bar' ? 0 : undefined,
       })),
     },
     options: {
@@ -350,14 +432,18 @@ function buildChart(sales) {
           position: 'left',
           min: minY,
           max: maxY,
-          ticks: { callback: (v) => v + ' ₽' },
+          ticks: {
+            callback: (v) => (typeof v === 'number' ? Math.round(v) : v) + ' ₽',
+          },
         },
         y1: {
           position: 'right',
           min: minY1,
           max: maxY1,
           grid: { drawOnChartArea: false },
-          ticks: { callback: (v) => v + ' шт' },
+          ticks: {
+            callback: (v) => (typeof v === 'number' ? Math.round(v) : v) + ' шт',
+          },
         },
       },
     },

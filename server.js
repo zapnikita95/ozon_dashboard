@@ -8,6 +8,7 @@ const ozon = require('./lib/ozon');
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 const PORT = process.env.PORT || 3000;
+// Для Railway: примонтируйте Volume и задайте DATA_DIR=/data (или путь к тому), иначе при каждом деплое данные (расходники, продажи и т.д.) будут теряться.
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
 function ensureDataDir() {
@@ -442,34 +443,67 @@ app.get('/api/sales/grouped', (req, res) => {
   });
 });
 
-/** Список проданных товаров: дата, заказ, товар, sku, количество. */
+/** Список проданных товаров: дата, заказ, товар, sku, количество, ожидаемая стоимость, доставлено. Включает и выкупленные, и не доставленные. */
 app.get('/api/sales/sold-goods', (req, res) => {
   const sales = readJson('sales.json', []);
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
+  const deliveredFilter = (req.query.delivered || 'all').toLowerCase();
   const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
-  let list = sales.filter((s) => Number(s.amount ?? 0) > 0 && Array.isArray(s.items) && s.items.length);
+  let list = sales.filter((s) => Array.isArray(s.items) && s.items.length);
   if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
   if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
+
   const result = [];
+  const deliveredPostings = new Set();
   list.forEach((s) => {
     const date = toD(s.date || s.operation_date || s.created_at);
     const posting_number = s.posting?.posting_number || s.posting?.number || '';
+    const delivered = Number(s.amount ?? 0) > 0;
+    const expected_cost = s.potential_amount != null ? Number(s.potential_amount) : (delivered ? Number(s.amount) : null);
+    if (delivered && posting_number) deliveredPostings.add(posting_number);
     (s.items || []).forEach((it) => {
       result.push({
         date,
         posting_number,
         product_name: it.name || '',
         sku: it.sku,
-        quantity: 1,
+        quantity: Number(it.quantity) || 1,
+        expected_cost: expected_cost,
+        delivered,
       });
     });
   });
-  result.sort((a, b) => (b.date || '').localeCompare(a.date || '', 'ru'));
-  res.json(result);
+
+  const postings = readJson('postings.json', []);
+  const toDp = (v) => (v != null ? String(v).slice(0, 10) : '');
+  postings.forEach((p) => {
+    const num = p.posting_number || p.id;
+    if (!num || !String(num).includes('-')) return;
+    const dateStr = toDp(p.date || p.in_process_at || p.created_at);
+    if (dateFrom && dateStr < dateFrom) return;
+    if (dateTo && dateStr > dateTo) return;
+    if (deliveredPostings.has(String(num))) return;
+    result.push({
+      date: dateStr,
+      posting_number: num,
+      product_name: '—',
+      sku: '',
+      quantity: 1,
+      expected_cost: p.potential_amount != null ? Number(p.potential_amount) : null,
+      delivered: false,
+    });
+  });
+
+  let out = result;
+  if (deliveredFilter === 'yes') out = result.filter((r) => r.delivered);
+  else if (deliveredFilter === 'no') out = result.filter((r) => !r.delivered);
+  out.sort((a, b) => (b.date || '').localeCompare(a.date || '', 'ru'));
+  res.json(out);
 });
 
 // ——— Expense items & product types ———
+// Расходники хранятся в expense_items.json; приложение никогда не перезаписывает файл пустым массивом при старте — только по действиям пользователя (POST/PUT/DELETE).
 app.get('/api/expense-items', (req, res) => {
   res.json(readJson('expense_items.json', []));
 });
@@ -739,6 +773,7 @@ app.get('/api/finance-summary', (req, res) => {
       }
     }
   });
+  const total_gross = received + ozon_expenses + ad_expenses;
 
   const expenseItems = readJson('expense_items.json', []);
   const expensePerPreset = readJson('expense_per_preset.json', {});
@@ -788,6 +823,7 @@ app.get('/api/finance-summary', (req, res) => {
   res.json({
     date_from: dateFrom,
     date_to: dateTo,
+    total_gross,
     received,
     ozon_expenses,
     ad_expenses,
