@@ -69,6 +69,8 @@
           <button type="button" class="btn btn-secondary" id="btn-export-excel">Выгрузить в Excel</button>
           <button type="button" class="btn btn-secondary" id="btn-export-data" title="Скачать sales и postings для переноса на прод">Скачать данные</button>
           <button type="button" class="btn btn-secondary" id="btn-import-data" title="Загрузить ранее скачанный JSON на этот сервер">Загрузить данные</button>
+          <input type="text" id="prod-url" placeholder="URL прод (например https://ozondashboard-production.up.railway.app)" title="URL прод-сервера для кнопки «Отправить на прод»" style="max-width:280px">
+          <button type="button" class="btn btn-secondary" id="btn-push-to-prod" title="Отправить текущие данные на прод — график на проде будет как здесь">Отправить на прод</button>
           <input type="file" id="input-import-data" accept=".json" hidden>
         </div>
       </div>

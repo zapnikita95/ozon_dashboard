@@ -60,6 +60,18 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
+// CORS для POST /api/data/import: с локалхоста можно отправить данные на прод (один источник правды).
+app.use('/api/data/import', (req, res, next) => {
+  const origin = req.get('Origin');
+  if (origin && (/^https?:\/\/localhost(:\d+)?$/.test(origin) || /railway|ozondashboard/.test(origin))) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // ——— Products ———
 app.get('/api/products', async (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -358,8 +370,13 @@ app.get('/api/sales/chart-data', (req, res) => {
       }
     }
     const potentialOp = Number(s.potential_amount ?? 0);
-    byDay[dOp].potential += potentialOp;
-    if (potentialOp > 0 && pn && String(pn).includes('-')) potentialAlreadyFromSales.add(String(pn));
+    if (potentialOp > 0 && s.type !== 'returns') {
+      const hasPn = pn && String(pn).includes('-');
+      if (!hasPn || !potentialAlreadyFromSales.has(String(pn))) {
+        byDay[dOp].potential += potentialOp;
+        if (hasPn) potentialAlreadyFromSales.add(String(pn));
+      }
+    }
   });
 
   // Потенциальная прибыль по заказам из postings: только те, что ещё НЕ учтены в sales (чтобы не дублировать 2353+2353=4706)

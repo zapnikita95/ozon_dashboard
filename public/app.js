@@ -683,6 +683,44 @@ document.getElementById('input-import-data')?.addEventListener('change', async (
   }
 });
 
+const PROD_URL_KEY = 'ozon_prod_url';
+document.getElementById('prod-url')?.addEventListener('blur', (e) => {
+  const v = e.target?.value?.trim();
+  if (v) try { localStorage.setItem(PROD_URL_KEY, v); } catch (_) {}
+});
+document.getElementById('btn-push-to-prod')?.addEventListener('click', async () => {
+  const input = document.getElementById('prod-url');
+  let prodUrl = input?.value?.trim();
+  if (!prodUrl) {
+    prodUrl = localStorage.getItem(PROD_URL_KEY) || '';
+    if (prodUrl) input.value = prodUrl;
+  } else try { localStorage.setItem(PROD_URL_KEY, prodUrl); } catch (_) {}
+  if (!prodUrl) {
+    showToast('Укажите URL прод-сервера в поле слева (например https://ozondashboard-production.up.railway.app)', 'error');
+    return;
+  }
+  const base = prodUrl.replace(/\/$/, '');
+  try {
+    showToast('Отправка на прод…');
+    const r = await fetch(API + '/data/export?_=' + Date.now());
+    if (!r.ok) throw new Error('Не удалось получить данные');
+    const data = await r.json();
+    const res = await fetch(base + '/api/data/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sales: data.sales || [], postings: data.postings || [] }),
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result.ok) {
+      showToast(result.error || res.statusText || 'Ошибка отправки', 'error');
+      return;
+    }
+    showToast(`На прод отправлено: продаж ${result.sales ?? 0}, постингов ${result.postings ?? 0}. Обнови страницу на проде.`);
+  } catch (e) {
+    showToast(e.message || 'Ошибка', 'error');
+  }
+});
+
 // ——— Costs section ———
 async function loadCostsSection() {
   try {
@@ -1196,6 +1234,11 @@ function runInit() {
     restoreDashboardState();
     setPeriodDates();
     saveDashboardState();
+    const savedProdUrl = localStorage.getItem(PROD_URL_KEY);
+    if (savedProdUrl) {
+      const el = document.getElementById('prod-url');
+      if (el && !el.value) el.value = savedProdUrl;
+    }
 
     const savedSection = (typeof localStorage !== 'undefined' && localStorage.getItem(SECTION_KEY)) || 'sales';
     const sectionEl = document.querySelector('.nav-item[data-section="' + savedSection + '"]');
