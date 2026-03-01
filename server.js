@@ -279,6 +279,8 @@ app.get('/api/sales', (req, res) => {
 
 /** Данные для графика: по дням received, expenses (озон + расходники), orders, potential. Potential = те же данные, что таблица «Проданные товары» (не доставлено). */
 const NON_GOODS_OPERATION_TYPES = ['Оплата эквайринга', 'Прочие расходы', 'Эквайринг', 'Комиссия за приём платежа'];
+/** В «Фактически получено» — только операции, похожие на реальную выплату (выплата/перевод/зачисление), чтобы начисления не дублировали график. */
+const RECEIVED_OPERATION_MATCH = /выплата|перевод|зачисление|оплата заказа|доставлено/i;
 app.get('/api/sales/chart-data', (req, res) => {
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
@@ -338,8 +340,12 @@ app.get('/api/sales/chart-data', (req, res) => {
     const isOrder = pn && String(pn).includes('-');
     if (amt < 0) byDay[dOp].ozon_expenses += Math.abs(amt);
     if (amt > 0) {
-      if (dDel) byDay[dDel].received += amt;
-      else byDay[dOp].received += amt;
+      const typeName = String(s.operation_type_name || s.type || '').toLowerCase();
+      const isActualPayout = RECEIVED_OPERATION_MATCH.test(typeName);
+      if (isActualPayout) {
+        if (dDel) byDay[dDel].received += amt;
+        else byDay[dOp].received += amt;
+      }
       if (isOrder) {
         byDay[dOp].orderPostings.add(String(pn));
         if (dDel) byDay[dDel].orderPostings.add(String(pn));
@@ -782,9 +788,18 @@ function isOrderPosting(postingNumber) {
   return typeof postingNumber === 'string' && postingNumber.includes('-');
 }
 
-/** Общая функция: строки таблицы «Проданные товары» (дата, заказ, ожидаемая стоимость, доставлено). Один источник правды для таблицы и графика. */
+/** Общая функция: строки таблицы «Проданные товары» (дата, заказ, ожидаемая/итоговая сумма, доставлено). По заказу — одна сумма: если доставлен — сумма фактических выплат по нему, иначе ожидаемая. Без дублей по операциям. */
 function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
   const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+  // Сначала: доставлен = по заказу есть хотя бы одна операция с amount > 0 (по ВСЕМ sales, не только с items)
+  const deliveredPostings = new Set();
+  sales.forEach((s) => {
+    const pn = (s.posting?.posting_number || s.posting?.number || '').toString();
+    if (isOrderPosting(pn) && Number(s.amount ?? 0) > 0) deliveredPostings.add(pn);
+  });
+  if (dateFrom) { sales = sales.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom); }
+  if (dateTo) { sales = sales.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo); }
+
   let list = sales.filter((s) => {
     if (!Array.isArray(s.items) || !s.items.length) return false;
     const posting_number = s.posting?.posting_number || s.posting?.number || '';
@@ -793,11 +808,7 @@ function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
     if (NON_GOODS_OPERATION_TYPES.some((t) => typeName.includes(t))) return false;
     return true;
   });
-  if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
-  if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
 
-  const result = [];
-  const deliveredPostings = new Set();
   const products = readJson('products_cache.json', []);
   const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id || ''), p]));
   const bySku = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.sku || p.product_id || ''), p]));
@@ -808,21 +819,37 @@ function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
     return (p && p.name) ? String(p.name).trim() : '';
   }
 
+  // По заказу одна запись: totalPayout = сумма всех amount > 0, potentialAmount = ожидаемая (из любой операции)
+  const byPosting = new Map();
   list.forEach((s) => {
     const date = toD(s.date || s.operation_date || s.created_at);
-    const posting_number = s.posting?.posting_number || s.posting?.number || '';
-    const delivered = Number(s.amount ?? 0) > 0;
-    const expected_cost = s.potential_amount != null ? Number(s.potential_amount) : (delivered ? Number(s.amount) : null);
-    if (delivered && posting_number) deliveredPostings.add(posting_number);
-    (s.items || []).forEach((it) => {
+    const posting_number = (s.posting?.posting_number || s.posting?.number || '').toString();
+    const amt = Number(s.amount ?? 0);
+    const potential = s.potential_amount != null ? Number(s.potential_amount) : null;
+    if (!byPosting.has(posting_number)) {
+      byPosting.set(posting_number, { date, items: s.items || [], totalPayout: 0, potentialAmount: null });
+    }
+    const g = byPosting.get(posting_number);
+    if (amt > 0) g.totalPayout += amt;
+    if (potential != null && g.potentialAmount == null) g.potentialAmount = potential;
+    if ((s.items || []).length && (!g.items || !g.items.length)) g.items = s.items || [];
+  });
+
+  // deliveredPostings уже построен выше по всем sales с amount > 0
+  const result = [];
+  byPosting.forEach((g, posting_number) => {
+    const delivered = deliveredPostings.has(posting_number);
+    // Итоговая сумма по заказу: если доставлен — показываем сумму заказа (potential), иначе ожидаемую; не дублируем разными операциями (1200/2353)
+    const expected_cost = delivered ? (g.potentialAmount ?? g.totalPayout) : (g.potentialAmount ?? 0);
+    (g.items || []).forEach((it) => {
       const name = (it.name || '').trim() || productName(it);
       result.push({
-        date,
+        date: g.date,
         posting_number,
         product_name: name || '—',
         sku: it.sku,
         quantity: Number(it.quantity) || 1,
-        expected_cost: expected_cost,
+        expected_cost: expected_cost || null,
         delivered,
       });
     });
