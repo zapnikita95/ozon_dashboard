@@ -437,32 +437,37 @@ app.get('/api/posting/:postingNumber', async (req, res) => {
 
 /** Количество заказов в доставке (ещё не получена оплата, не отменён, не возврат). */
 app.get('/api/orders-in-delivery', (req, res) => {
-  const sales = readJson('sales.json', []);
-  const overrides = readJson('payout_overrides.json', {});
-  const postings = readJson('postings.json', []);
-  const paid = new Set();
-  sales.forEach((s) => {
-    const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
-    if (amt <= 0) return;
-    const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
-    if (pn && String(pn).includes('-')) paid.add(String(pn));
-  });
-  const exclude = (status, substatus, cancellation) => {
-    if (cancellation != null && typeof cancellation === 'object') return true;
-    const s = (status || '').toLowerCase();
-    const sub = (substatus || '').toLowerCase();
-    if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
-    return false;
-  };
-  let count = 0;
-  postings.forEach((p) => {
-    const num = p.posting_number || p.id;
-    if (!num || !String(num).includes('-')) return;
-    if (paid.has(String(num))) return;
-    if (exclude(p.status, p.substatus, p.cancellation)) return;
-    count++;
-  });
-  res.json({ count });
+  try {
+    const sales = readJson('sales.json', []);
+    const overrides = readJson('payout_overrides.json', {});
+    const postings = readJson('postings.json', []);
+    const paid = new Set();
+    sales.forEach((s) => {
+      const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
+      if (amt <= 0) return;
+      const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
+      if (pn && String(pn).includes('-')) paid.add(String(pn));
+    });
+    const exclude = (status, substatus, cancellation) => {
+      if (cancellation != null && typeof cancellation === 'object') return true;
+      const s = (status || '').toLowerCase();
+      const sub = (substatus || '').toLowerCase();
+      if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
+      return false;
+    };
+    let count = 0;
+    postings.forEach((p) => {
+      const num = p.posting_number || p.id;
+      if (!num || !String(num).includes('-')) return;
+      if (paid.has(String(num))) return;
+      if (exclude(p.status, p.substatus, p.cancellation)) return;
+      count++;
+    });
+    res.json({ count });
+  } catch (e) {
+    console.error('orders-in-delivery:', e.message);
+    res.json({ count: 0 });
+  }
 });
 
 app.get('/api/postings', async (req, res) => {
@@ -732,6 +737,29 @@ app.put('/api/sales/:id/payout', (req, res) => {
   overrides[req.params.id] = req.body.actual_payout_rub;
   writeJson('payout_overrides.json', overrides);
   res.json({ ok: true });
+});
+
+/** Скачать все данные (sales + postings) для переноса на прод. */
+app.get('/api/data/export', (req, res) => {
+  const data = {
+    sales: readJson('sales.json', []),
+    postings: readJson('postings.json', []),
+  };
+  res.setHeader('Content-Disposition', 'attachment; filename=ozon-dashboard-data.json');
+  res.json(data);
+});
+
+/** Загрузить данные на прод (заменить sales.json и postings.json). Тело: { sales?: [], postings?: [] }. */
+app.post('/api/data/import', (req, res) => {
+  try {
+    const body = req.body || {};
+    if (Array.isArray(body.sales)) writeJson('sales.json', body.sales);
+    if (Array.isArray(body.postings)) writeJson('postings.json', body.postings);
+    res.json({ ok: true, sales: body.sales?.length ?? 0, postings: body.postings?.length ?? 0 });
+  } catch (e) {
+    console.error('data/import:', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
 });
 
 /** Подтянуть состав заказов (items) по всем продажам без items — для корректного расчёта остатков расходников. */

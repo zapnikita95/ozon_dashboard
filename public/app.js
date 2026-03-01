@@ -603,8 +603,9 @@ async function updateOrdersInDelivery() {
   const el = document.getElementById('header-orders-in-delivery');
   if (!el) return;
   try {
-    const r = await fetch(API + '/orders-in-delivery?' + '_=' + Date.now()).then((x) => x.json()).catch(() => ({}));
-    const n = r.count != null ? Number(r.count) : NaN;
+    const res = await fetch(API + '/orders-in-delivery?_=' + Date.now());
+    const r = res.ok ? (await res.json().catch(() => ({}))) : {};
+    const n = r.count != null ? Number(r.count) : 0;
     el.innerHTML = 'Заказов в доставке: <strong>' + (Number.isNaN(n) ? '—' : n) + '</strong>';
   } catch (e) {
     el.innerHTML = 'Заказов в доставке: <strong>—</strong>';
@@ -632,6 +633,54 @@ document.getElementById('btn-export-excel')?.addEventListener('click', () => {
   if (date_from) q.set('date_from', date_from);
   if (date_to) q.set('date_to', date_to);
   window.location.href = API + '/sales/export?' + q;
+});
+
+document.getElementById('btn-export-data')?.addEventListener('click', async () => {
+  try {
+    const r = await fetch(API + '/data/export?_=' + Date.now());
+    if (!r.ok) throw new Error(r.statusText);
+    const data = await r.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ozon-dashboard-data.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('Файл скачан. Загрузите его на проде кнопкой «Загрузить данные».');
+  } catch (e) {
+    showToast(e.message || 'Ошибка скачивания', 'error');
+  }
+});
+
+document.getElementById('btn-import-data')?.addEventListener('click', () => {
+  document.getElementById('input-import-data')?.click();
+});
+document.getElementById('input-import-data')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!Array.isArray(data.sales) && !Array.isArray(data.postings)) {
+      showToast('В файле должны быть поля sales и/или postings (массивы)', 'error');
+      return;
+    }
+    const res = await fetch(API + '/data/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sales: data.sales || [], postings: data.postings || [] }),
+    }).then((r) => r.json()).catch((err) => ({ ok: false, error: err.message }));
+    if (res.ok) {
+      showToast(`Загружено: продаж ${res.sales ?? 0}, постингов ${res.postings ?? 0}`);
+      loadSalesSection();
+      updateOrdersInDelivery();
+    } else {
+      showToast(res.error || 'Ошибка загрузки', 'error');
+    }
+  } catch (err) {
+    showToast(err.message || 'Ошибка чтения файла', 'error');
+  }
 });
 
 // ——— Costs section ———
