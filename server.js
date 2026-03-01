@@ -67,21 +67,33 @@ app.post('/api/products/sync', async (req, res) => {
 // ——— Stocks ———
 app.get('/api/stocks', async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  const fallback = () => {
-    const cached = readJson('products_cache.json', []);
-    return (Array.isArray(cached) ? cached : []).map((p) => ({
-      product_id: p.product_id,
-      offer_id: p.offer_id,
-      stocks: [],
-    }));
-  };
+  const cached = readJson('products_cache.json', []);
+  const products = Array.isArray(cached) ? cached : [];
+  const baseList = products.map((p) => ({
+    product_id: p.product_id,
+    offer_id: p.offer_id,
+    stocks: [],
+  }));
   try {
-    const items = await ozon.getAllStocks();
-    res.json(items.length ? items : fallback());
+    const ozonItems = await ozon.getAllStocks();
+    if (ozonItems.length > 0) {
+      const byOffer = new Map(ozonItems.map((i) => [String(i.offer_id || ''), i]));
+      const byProduct = new Map(ozonItems.map((i) => [String(i.product_id || ''), i]));
+      const out = products.map((p) => {
+        const o = byOffer.get(String(p.offer_id || '')) || byProduct.get(String(p.product_id || ''));
+        return {
+          product_id: p.product_id,
+          offer_id: p.offer_id,
+          stocks: o && Array.isArray(o.stocks) ? o.stocks : (o?.stocks != null ? [].concat(o.stocks) : []),
+        };
+      });
+      return res.json(out);
+    }
   } catch (e) {
     console.error('api/stocks:', e.message);
-    res.json(fallback());
+    res.set('X-Stocks-Error', e.message || 'Ozon API error');
   }
+  res.json(baseList);
 });
 
 app.post('/api/stocks/upload', upload.single('file'), async (req, res) => {

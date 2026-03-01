@@ -875,12 +875,15 @@ document.getElementById('btn-refresh-products')?.addEventListener('click', async
 });
 
 async function loadStocks() {
-  const [stocksRaw, productsRaw] = await Promise.all([
-    apiGet('/stocks').catch(() => []),
-    apiGet('/products').catch(() => []),
-  ]);
+  const stocksPromise = fetch(API + '/stocks?_=' + Date.now()).then(async (r) => {
+    const data = await r.json();
+    const err = r.headers.get('X-Stocks-Error');
+    if (err) showToast('Остатки с Ozon не загружены. Проверьте OZON_CLIENT_ID и OZON_API_KEY на сервере.', 'error');
+    return Array.isArray(data) ? data : [];
+  }).catch(() => []);
+  const productsRaw = await apiGet('/products').catch(() => []);
   const products = Array.isArray(productsRaw) ? productsRaw : [];
-  const stocks = Array.isArray(stocksRaw) ? stocksRaw : [];
+  const stocks = await stocksPromise;
   const stockByOffer = new Map(stocks.map((s) => [String(s.offer_id || ''), s]));
   const stockByProduct = new Map(stocks.map((s) => [String(s.product_id || ''), s]));
   const tbody = document.getElementById('stocks-tbody');
@@ -889,6 +892,7 @@ async function loadStocks() {
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">Нажмите «↻» чтобы загрузить товары с Ozon.</td></tr>';
     return;
   }
+  const hasAnyStock = stocks.some((s) => Array.isArray(s.stocks) && s.stocks.length && s.stocks.some((st) => (Number(st.present) || 0) + (Number(st.reserved) || 0) > 0));
   tbody.innerHTML = products.map((p) => {
     const si = stockByOffer.get(String(p.offer_id || '')) || stockByProduct.get(String(p.product_id || ''));
     const stockArr = Array.isArray(si?.stocks) ? si.stocks : [];
@@ -903,6 +907,7 @@ async function loadStocks() {
       <td><input type="number" min="0" class="stock-edit" data-product-id="${p.product_id}" data-offer-id="${p.offer_id}" value="${stock}" placeholder="${stock}" style="width:80px"></td>
     </tr>`;
   }).join('');
+  if (!hasAnyStock && products.length > 0) showToast('Все остатки 0. Если на Ozon есть остатки — проверьте креды (OZON_*) на сервере и нажмите ↻ снова.', 'error');
 }
 
 document.getElementById('stocks-select-all')?.addEventListener('change', (e) => {
