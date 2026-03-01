@@ -225,6 +225,98 @@ app.get('/api/sales', (req, res) => {
   res.json(list);
 });
 
+/** Данные для графика: по дням received, expenses (озон + расходники), orders, potential */
+app.get('/api/sales/chart-data', (req, res) => {
+  const dateFrom = req.query.date_from || '';
+  const dateTo = req.query.date_to || '';
+  const sales = readJson('sales.json', []);
+  const overrides = readJson('payout_overrides.json', {});
+  const postings = readJson('postings.json', []);
+  const productTypes = readJson('product_types.json', {});
+  const expensePerPreset = readJson('expense_per_preset.json', {});
+  let expenseItems = readJson('expense_items.json', []);
+  expenseItems = expenseItems.map((e) => normalizeExpenseItem({ ...e }));
+  const products = readJson('products_cache.json', []);
+  const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
+  const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
+  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+  const postingToDeliveryDate = new Map();
+  postings.forEach((p) => {
+    const num = p.posting_number || p.id;
+    const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
+    if (num && d) postingToDeliveryDate.set(String(num), d);
+  });
+
+  function costPerUnit(presetId) {
+    if (!presetId) return 0;
+    const cons = expensePerPreset[presetId] || {};
+    let sum = 0;
+    expenseItems.forEach((e) => {
+      const q = Number(cons[e.id]) || 0;
+      const total = expenseTotalCost(e);
+      const units = expenseTotalQuantity(e) || 1;
+      sum += q * (total / units);
+    });
+    return sum;
+  }
+
+  let list = sales.map((s) => ({
+    ...s,
+    actual_payout_rub: overrides[s.transaction_id ?? s.id] != null ? overrides[s.transaction_id ?? s.id] : s.amount,
+  }));
+  if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
+  if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
+  list = list.map((s) => {
+    const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
+    const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
+    const delivery_date = pn && amt > 0 ? postingToDeliveryDate.get(String(pn)) ?? null : null;
+    return { ...s, delivery_date: delivery_date || undefined };
+  });
+
+  const byDay = {};
+  list.forEach((s) => {
+    const dOp = toD(s.date || s.operation_date || s.created_at);
+    const dDel = toD(s.delivery_date || s.date || s.operation_date || s.created_at);
+    if (!dOp) return;
+    if (!byDay[dOp]) byDay[dOp] = { received: 0, ozon_expenses: 0, consumables: 0, orderPostings: new Set(), potential: 0 };
+    if (dDel && !byDay[dDel]) byDay[dDel] = { received: 0, ozon_expenses: 0, consumables: 0, orderPostings: new Set(), potential: 0 };
+    const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
+    const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
+    const isOrder = pn && String(pn).includes('-');
+    if (amt < 0) byDay[dOp].ozon_expenses += Math.abs(amt);
+    if (amt > 0) {
+      if (dDel) byDay[dDel].received += amt;
+      else byDay[dOp].received += amt;
+      if (isOrder) {
+        byDay[dOp].orderPostings.add(String(pn));
+        if (dDel) byDay[dDel].orderPostings.add(String(pn));
+      }
+      if (Array.isArray(s.items) && s.items.length) {
+        const dAttr = dDel || dOp;
+        let cost = 0;
+        s.items.forEach((it) => {
+          const sku = it.sku != null ? String(it.sku) : '';
+          const product = byProductId.get(sku) || byOfferId.get(sku);
+          const offerId = product?.offer_id != null ? String(product.offer_id) : sku;
+          const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
+          cost += (Number(it.quantity) || 1) * costPerUnit(presetId);
+        });
+        byDay[dAttr].consumables += cost;
+      }
+    }
+    byDay[dOp].potential += Number(s.potential_amount ?? 0);
+  });
+
+  const labels = Object.keys(byDay).sort();
+  res.json({
+    labels,
+    received: labels.map((d) => byDay[d].received),
+    expenses: labels.map((d) => byDay[d].ozon_expenses + byDay[d].consumables),
+    orders: labels.map((d) => (byDay[d].orderPostings && byDay[d].orderPostings.size) || 0),
+    potential: labels.map((d) => byDay[d].potential),
+  });
+});
+
 app.get('/api/postings', async (req, res) => {
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';

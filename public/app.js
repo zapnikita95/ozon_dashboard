@@ -164,21 +164,13 @@ async function loadFinanceSummary() {
   set('card-net', formatMoney(r.net_profit));
   const ozonTotal = Number(r.ozon_total) || Number(r.ad_expenses) + Number(r.ozon_expenses) || 0;
   set('card-expenses', formatMoney(ozonTotal));
+  set('card-consumables', formatMoney(r.consumables));
   set('card-ad', formatMoney(r.ad_spend));
   set('margin-value', (r.margin_percent != null ? r.margin_percent : '—') + ' %');
-  const total = ozonTotal || 1;
-  const adPct = ((Number(r.ad_expenses) || 0) / total * 100).toFixed(0);
-  const ozonPct = ((Number(r.ozon_expenses) || 0) / total * 100).toFixed(0);
-  const consPct = ((Number(r.consumables) || 0) / total * 100).toFixed(0);
-  const barAd = document.getElementById('bar-ad');
+  set('pct-ozon', '100%');
+  set('pct-consumables', formatMoney(r.consumables));
   const barOzon = document.getElementById('bar-ozon');
-  const barCons = document.getElementById('bar-consumables');
-  if (barAd) barAd.style.width = adPct + '%';
-  if (barOzon) barOzon.style.width = ozonPct + '%';
-  if (barCons) barCons.style.width = consPct + '%';
-  set('pct-ad', adPct + '%');
-  set('pct-ozon', ozonPct + '%');
-  set('pct-consumables', consPct + '%');
+  if (barOzon) barOzon.style.width = '100%';
 }
 
 async function loadSales() {
@@ -236,7 +228,10 @@ async function loadSales() {
   bindTableSort('sales-table');
   const dateTh = document.querySelector('#sales-table thead th[data-sort="date"]');
   if (dateTh) dateTh.classList.add('sort-desc');
-  buildChart(list);
+  const { date_from, date_to } = getPeriod();
+  const chartQ = new URLSearchParams({ date_from, date_to });
+  const chartData = await fetch(API + '/sales/chart-data?' + chartQ).then((r) => r.json()).catch(() => null);
+  buildChart(chartData || list);
   loadSalesGroupedView();
   loadSoldGoods();
   bindSoldGoodsDeliveredFilter();
@@ -365,36 +360,48 @@ function bindSoldGoodsDeliveredFilter() {
   };
 }
 
-function buildChart(sales) {
-  const byDay = {};
-  sales.forEach((s) => {
-    const dOp = (s.date || s.operation_date || s.created_at || '').slice(0, 10);
-    const dDel = (s.delivery_date || s.date || s.operation_date || s.created_at || '').slice(0, 10);
-    if (!dOp) return;
-    if (!byDay[dOp]) byDay[dOp] = { date: dOp, received: 0, amount: 0, orderPostings: new Set(), potential: 0 };
-    if (dDel && !byDay[dDel]) byDay[dDel] = { date: dDel, received: 0, amount: 0, orderPostings: new Set(), potential: 0 };
-    const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
-    const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
-    const isOrderPosting = postingNumber && String(postingNumber).includes('-');
-    byDay[dOp].amount += Number(s.amount ?? 0);
-    if (isOrderPosting && amt > 0) byDay[dOp].orderPostings.add(String(postingNumber));
-    if (dDel && isOrderPosting && amt > 0) byDay[dDel].orderPostings.add(String(postingNumber));
-    byDay[dOp].potential += Number(s.potential_amount ?? 0);
-    if (dDel) byDay[dDel].received += amt > 0 ? amt : 0;
-    else byDay[dOp].received += amt > 0 ? amt : 0;
-  });
-  const labels = Object.keys(byDay).sort();
-  const receivedData = labels.map((d) => byDay[d].received);
-  const amountData = labels.map((d) => byDay[d].amount);
-  const ordersData = labels.map((d) => (byDay[d].orderPostings && byDay[d].orderPostings.size) || 0);
-  const ordersBarsData = labels.map((d) => Math.max(0, (byDay[d].orderPostings && byDay[d].orderPostings.size) || 0));
-  const potentialData = labels.map((d) => byDay[d].potential);
+function buildChart(data) {
+  const isChartData = data && data.labels && Array.isArray(data.received);
+  let labels, receivedData, amountData, ordersBarsData, potentialData;
+  if (isChartData) {
+    labels = data.labels;
+    receivedData = data.received;
+    amountData = data.expenses;
+    ordersBarsData = (data.orders || []).map((n) => Math.max(0, n));
+    potentialData = data.potential || labels.map(() => 0);
+  } else {
+    const sales = Array.isArray(data) ? data : [];
+    const byDay = {};
+    sales.forEach((s) => {
+      const dOp = (s.date || s.operation_date || s.created_at || '').slice(0, 10);
+      const dDel = (s.delivery_date || s.date || s.operation_date || s.created_at || '').slice(0, 10);
+      if (!dOp) return;
+      if (!byDay[dOp]) byDay[dOp] = { date: dOp, received: 0, amount: 0, orderPostings: new Set(), potential: 0 };
+      if (dDel && !byDay[dDel]) byDay[dDel] = { date: dDel, received: 0, amount: 0, orderPostings: new Set(), potential: 0 };
+      const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
+      const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
+      const isOrderPosting = postingNumber && String(postingNumber).includes('-');
+      byDay[dOp].amount += Number(s.amount ?? 0);
+      if (isOrderPosting && amt > 0) byDay[dOp].orderPostings.add(String(postingNumber));
+      if (dDel && isOrderPosting && amt > 0) byDay[dDel].orderPostings.add(String(postingNumber));
+      byDay[dOp].potential += Number(s.potential_amount ?? 0);
+      if (dDel) byDay[dDel].received += amt > 0 ? amt : 0;
+      else byDay[dOp].received += amt > 0 ? amt : 0;
+    });
+    labels = Object.keys(byDay).sort();
+    receivedData = labels.map((d) => byDay[d].received);
+    amountData = labels.map((d) => byDay[d].amount);
+    ordersBarsData = labels.map((d) => Math.max(0, (byDay[d].orderPostings && byDay[d].orderPostings.size) || 0));
+    potentialData = labels.map((d) => byDay[d].potential);
+  }
+  const ordersData = ordersBarsData;
 
   const legendContainer = document.getElementById('chart-legend');
   if (!legendContainer) return;
+  const amountLabel = isChartData ? 'Расходы' : 'Сумма по Ozon';
   const datasets = [
     { id: 'received', label: 'Фактически получено', data: receivedData, borderColor: '#27272a', backgroundColor: 'rgba(39,39,42,0.08)', hidden: false, type: 'line' },
-    { id: 'amount', label: 'Сумма по Ozon', data: amountData, borderColor: '#71717a', backgroundColor: 'rgba(113,113,122,0.08)', hidden: false, type: 'line' },
+    { id: 'amount', label: amountLabel, data: amountData, borderColor: '#71717a', backgroundColor: 'rgba(113,113,122,0.08)', hidden: false, type: 'line' },
     { id: 'potential', label: 'Потенциальная прибыль', data: potentialData, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.08)', hidden: false, type: 'line' },
     { id: 'orders', label: 'Заказов (шт)', data: ordersBarsData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.35)', hidden: false, yAxisID: 'y1', type: 'bar' },
   ];

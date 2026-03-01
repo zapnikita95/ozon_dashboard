@@ -31,7 +31,11 @@
         </div>
         <div class="card">
           <span class="card-label">Расходы Озон</span>
-          <span class="card-value card-value-tooltip" id="card-expenses" title="Сумма списаний Ozon за период: комиссии, логистика, реклама">—</span>
+          <span class="card-value card-value-tooltip" id="card-expenses" title="Сумма списаний Ozon за период">—</span>
+        </div>
+        <div class="card">
+          <span class="card-label">Себестоимость расходников</span>
+          <span class="card-value card-value-tooltip" id="card-consumables" title="Стоимость израсходованных материалов на проданные товары за период">—</span>
         </div>
         <div class="card">
           <span class="card-label">Рекламные расходы</span>
@@ -77,19 +81,14 @@
         <h3>Структура расходов</h3>
         <div class="bars">
           <div class="bar-row">
-            <span>Рекламные расходы %</span>
-            <div class="bar-track"><div class="bar-fill" id="bar-ad" style="width:0%"></div></div>
-            <span class="bar-pct" id="pct-ad">0%</span>
+            <span>Расходы Озон</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-ozon" style="width:100%"></div></div>
+            <span class="bar-pct" id="pct-ozon">100%</span>
           </div>
           <div class="bar-row">
-            <span>Озон (комиссии, логистика) %</span>
-            <div class="bar-track"><div class="bar-fill" id="bar-ozon" style="width:0%"></div></div>
-            <span class="bar-pct" id="pct-ozon">0%</span>
-          </div>
-          <div class="bar-row">
-            <span>Расходники %</span>
-            <div class="bar-track"><div class="bar-fill" id="bar-consumables" style="width:0%"></div></div>
-            <span class="bar-pct" id="pct-consumables">0%</span>
+            <span>Себестоимость расходников</span>
+            <div class="bar-track"></div>
+            <span class="bar-pct" id="pct-consumables">— ₽</span>
           </div>
         </div>
         <div class="margin-row">
