@@ -176,8 +176,9 @@ async function loadFinanceSummary() {
   set('margin-value', (r.margin_percent != null ? r.margin_percent : '—') + ' %');
   set('pct-consumables', formatMoney(r.consumables));
   const totalGross = Number(r.total_gross) || 0;
-  const ozonPct = totalGross > 0 ? ((Number(r.ozon_expenses) || 0) / totalGross * 100).toFixed(1) : 0;
-  const adPct = totalGross > 0 ? ((Number(r.ad_expenses) || 0) / totalGross * 100).toFixed(1) : 0;
+  const adSpend = Number(r.ad_spend) || 0;
+  const ozonPct = totalGross > 0 ? ((ozonTotal / totalGross) * 100).toFixed(1) : 0;
+  const adPct = totalGross > 0 ? ((adSpend / totalGross) * 100).toFixed(1) : 0;
   set('pct-ozon', ozonPct + '%');
   set('pct-ad', adPct + '%');
   const barOzon = document.getElementById('bar-ozon');
