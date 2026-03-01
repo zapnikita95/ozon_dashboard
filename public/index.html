@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ozon Dashboard</title>
+  <link rel="icon" href="favicon.jpg" type="image/jpeg">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="header">
+    <img src="logo.jpg" alt="Дом Нот" class="logo-img">
+  </header>
+  <aside class="sidebar">
+    <nav class="nav">
+      <button type="button" class="nav-item active" data-section="sales">Продажи и доходы</button>
+      <button type="button" class="nav-item" data-section="costs">Себестоимость</button>
+      <button type="button" class="nav-item" data-section="products">Товары</button>
+    </nav>
+  </aside>
+  <main class="content">
+    <!-- Продажи и доходы -->
+    <section id="section-sales" class="section active">
+      <div class="cards">
+        <div class="card">
+          <span class="card-label">Получено <span class="tooltip-trigger" title="Сумма, которую Озон перевёл на ваш счёт за период">?</span></span>
+          <span class="card-value" id="card-received">—</span>
+        </div>
+        <div class="card">
+          <span class="card-label">Чистая прибыль <span class="tooltip-trigger" title="Деньги на счёте за вычетом рекламы, расходников и налогов">?</span></span>
+          <span class="card-value" id="card-net">—</span>
+        </div>
+        <div class="card">
+          <span class="card-label">Расходы <span class="tooltip-trigger" title="Сумма всех расходов: комиссия и логистика Ozon, реклама, себестоимость">?</span></span>
+          <span class="card-value" id="card-expenses">—</span>
+        </div>
+        <div class="card">
+          <span class="card-label">Реклама <span class="tooltip-trigger" title="Расходы на рекламу: недельный бюджет и разовые кампании">?</span></span>
+          <span class="card-value" id="card-ad">—</span>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="period">
+          <select id="period-preset">
+            <option value="week">Неделя</option>
+            <option value="month" selected>Месяц</option>
+            <option value="quarter">Квартал</option>
+          </select>
+          <input type="date" id="date-from" aria-label="Дата с">
+          <input type="date" id="date-to" aria-label="Дата по">
+        </div>
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="btn-sync-sales">Обновить продажи</button>
+          <span id="sync-sales-status" class="status-msg" aria-live="polite"></span>
+          <button type="button" class="btn btn-secondary" id="btn-export-excel">Выгрузить в Excel</button>
+        </div>
+      </div>
+      <div class="chart-block">
+        <div class="chart-header">
+          <h3>График</h3>
+          <button type="button" class="btn btn-small" id="btn-download-chart">Скачать график</button>
+        </div>
+        <div class="chart-legend" id="chart-legend"></div>
+        <div class="chart-wrap"><canvas id="chart"></canvas></div>
+      </div>
+      <div class="expense-structure">
+        <h3>Структура расходов</h3>
+        <div class="bars">
+          <div class="bar-row">
+            <span>Реклама %</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-ad" style="width:0%"></div></div>
+            <span class="bar-pct" id="pct-ad">0%</span>
+          </div>
+          <div class="bar-row">
+            <span>Озон %</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-ozon" style="width:0%"></div></div>
+            <span class="bar-pct" id="pct-ozon">0%</span>
+          </div>
+          <div class="bar-row">
+            <span>Расходники %</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-consumables" style="width:0%"></div></div>
+            <span class="bar-pct" id="pct-consumables">0%</span>
+          </div>
+        </div>
+        <div class="margin-row">
+          <span>Маржинальность <span class="tooltip-trigger" title="Доля чистой прибыли в выручке после вычета рекламы, расходников и налогов">?</span></span>
+          <strong id="margin-value">— %</strong>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Продажи <span class="tooltip-trigger" title="Сумма, которую Озон реально перевёл на счёт по этой продаже; при необходимости укажите вручную">?</span></h3>
+        <div class="table-wrap">
+          <table class="data-table" id="sales-table">
+            <thead>
+              <tr>
+                <th data-sort="date">Дата</th>
+                <th>Заказ / Товар</th>
+                <th data-sort="amount">Сумма по Ozon</th>
+                <th>Ваша цена</th>
+                <th data-sort="actual">Фактически отправил Озон (₽)</th>
+              </tr>
+            </thead>
+            <tbody id="sales-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Себестоимость -->
+    <section id="section-costs" class="section">
+      <div class="cards single">
+        <div class="card">
+          <span class="card-label">Стоимость товаров на складе</span>
+          <span class="card-value" id="cost-total">—</span>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Титульные карточки (расходники по типам)</h3>
+        <div id="preset-cards"></div>
+      </div>
+      <div class="table-block">
+        <h3>Типы товаров (пресеты)</h3>
+        <button type="button" class="btn btn-primary btn-small" id="btn-add-preset">Добавить тип товара</button>
+        <ul id="preset-list" class="preset-list"></ul>
+      </div>
+      <div class="table-block">
+        <h3>Расходники</h3>
+        <button type="button" class="btn btn-primary btn-small" id="btn-add-expense">Добавить расходник</button>
+        <div class="table-wrap">
+          <table class="data-table" id="expense-items-table">
+            <thead>
+              <tr>
+                <th>Название</th>
+                <th>Стоимость (₽)</th>
+                <th>Кол-во в закупке</th>
+                <th>Ед. изм.</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="expense-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Расход на тип товара (сколько каких расходников на 1 шт)</h3>
+        <div class="table-wrap">
+          <table class="data-table" id="expense-per-preset-table">
+            <thead><tr><th>Тип / Расходник</th></tr></thead>
+            <tbody id="expense-per-preset-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Привязка товаров к типу</h3>
+        <div class="table-wrap">
+          <table class="data-table" id="product-types-table">
+            <thead>
+              <tr>
+                <th>Товар</th>
+                <th>Тип (пресет)</th>
+              </tr>
+            </thead>
+            <tbody id="product-types-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Себестоимость и остатки</h3>
+        <div class="table-wrap">
+          <table class="data-table" id="costs-table">
+            <thead>
+              <tr>
+                <th data-sort="name">Товар</th>
+                <th>Тип</th>
+                <th data-sort="stock">Остаток</th>
+                <th data-sort="cost">Себестоимость (₽/шт)</th>
+                <th data-sort="total">Стоимость всего (₽)</th>
+                <th>Спрос (шт/день)</th>
+                <th>Хватит на (дней)</th>
+              </tr>
+            </thead>
+            <tbody id="costs-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Товары -->
+    <section id="section-products" class="section">
+      <div class="subnav">
+        <button type="button" class="subnav-item active" data-tab="stocks">Остатки</button>
+        <button type="button" class="subnav-item" data-tab="prices">Цены</button>
+        <button type="button" class="subnav-item" data-tab="descriptions">Описания</button>
+      </div>
+      <div id="tab-stocks" class="tab-pane active">
+        <button type="button" class="btn btn-primary" id="btn-plus10">+10 к выбранным остаткам</button>
+        <label class="btn btn-secondary" style="margin-left:8px">Загрузить из Excel <input type="file" accept=".xlsx,.xls" id="input-stock-file" hidden></label>
+        <span id="stock-upload-status" class="status-msg" aria-live="polite"></span>
+        <div class="table-wrap">
+          <table class="data-table" id="stocks-table">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="stocks-select-all" aria-label="Выбрать все"></th>
+                <th>Товар</th>
+                <th data-sort="stock">Остаток</th>
+              </tr>
+            </thead>
+            <tbody id="stocks-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="tab-prices" class="tab-pane">
+        <button type="button" class="btn btn-primary" id="btn-save-prices">Сохранить цены</button>
+        <div class="table-wrap">
+          <table class="data-table" id="prices-table">
+            <thead>
+              <tr>
+                <th>Товар</th>
+                <th>Текущая цена (₽)</th>
+                <th>Новая цена (₽)</th>
+              </tr>
+            </thead>
+            <tbody id="prices-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="tab-descriptions" class="tab-pane">
+        <div class="table-wrap">
+          <table class="data-table" id="descriptions-table">
+            <thead>
+              <tr>
+                <th>Товар</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="descriptions-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal-expense" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Добавить расходник</h3>
+      <form id="form-expense">
+        <label>Название <input type="text" name="name" required></label>
+        <label>Стоимость закупки (₽) <input type="number" name="cost" step="0.01" required></label>
+        <label>Кол-во в закупке <input type="number" name="quantity" min="1" required></label>
+        <label>Ед. изм. <input type="text" name="unit" value="шт" placeholder="шт, кг, л"></label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
+          <button type="submit" class="btn btn-primary">Добавить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-preset" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Добавить тип товара</h3>
+      <form id="form-preset">
+        <label>Название <input type="text" name="name" placeholder="Например: Диффузор 200 мл" required></label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
+          <button type="submit" class="btn btn-primary">Добавить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-description" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Описание товара</h3>
+      <p class="hint">Переносы строк сохранятся как переносы в карточке.</p>
+      <textarea id="description-text" rows="10"></textarea>
+      <input type="hidden" id="description-offer-id">
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
+        <button type="button" class="btn btn-primary" id="btn-save-description">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
