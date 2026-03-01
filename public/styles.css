@@ -730,10 +730,22 @@ h1, h2, h3, h4 {
   .content { padding: 12px 16px; }
   .header {
     padding: 8px 16px;
-    grid-template-columns: 1fr;
-    justify-items: center;
+    grid-template-columns: auto 1fr;
+    justify-items: stretch;
+    align-items: center;
+    gap: 12px;
   }
-  .header-logo { width: auto; }
+  .header-logo { width: auto; justify-self: start; }
+  .header-orders-in-delivery {
+    justify-self: end;
+    text-align: right;
+    padding-right: 0;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
   .logo-img { max-height: 34px; }
   body {
     grid-template-columns: 1fr;

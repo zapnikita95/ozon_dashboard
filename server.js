@@ -447,34 +447,13 @@ app.get('/api/posting/:postingNumber', async (req, res) => {
 });
 
 /** Количество заказов в доставке (ещё не получена оплата, не отменён, не возврат). */
-app.get('/api/orders-in-delivery', async (req, res) => {
+app.get('/api/orders-in-delivery', (req, res) => {
   try {
     const sales = readJson('sales.json', []);
     const overrides = readJson('payout_overrides.json', {});
-    let postings = [];
-    let fromCache = false;
-    let fetchError = null;
-    try {
-      const toIso = new Date().toISOString().slice(0, 19) + 'Z';
-      const fromIso = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
-      postings = await ozon.getPostingsListRange(fromIso, toIso);
-    } catch (e) {
-      fetchError = e.message;
-      console.error('orders-in-delivery: fetch postings from Ozon:', e.message);
-      postings = readJson('postings.json', []);
-      fromCache = true;
-    }
-    if (!Array.isArray(postings)) postings = [];
-    const cached = readJson('postings.json', []);
-    const byNum = new Map((Array.isArray(cached) ? cached : []).map((p) => [String(p.posting_number || p.id), p]));
-    postings = postings.map((p) => {
-      const num = p.posting_number || p.id;
-      const rec = byNum.get(String(num));
-      if (rec && (rec.potential_amount != null || rec.sum != null)) {
-        return { ...p, potential_amount: p.potential_amount ?? rec.potential_amount ?? rec.sum };
-      }
-      return p;
-    });
+    const postings = readJson('postings.json', []);
+
+    // Постинги, за которые уже пришла выплата (есть положительная транзакция)
     const paid = new Set();
     sales.forEach((s) => {
       const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
@@ -482,32 +461,27 @@ app.get('/api/orders-in-delivery', async (req, res) => {
       const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
       if (pn && String(pn).includes('-')) paid.add(String(pn));
     });
-    const exclude = (status, substatus, cancellation) => {
+
+    const excludeStatus = (status, substatus, cancellation) => {
       if (cancellation != null && typeof cancellation === 'object') return true;
       const s = (status || '').toLowerCase();
       const sub = (substatus || '').toLowerCase();
-      if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
-      return false;
+      return /cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) ||
+             /cancel|отмен|return|возврат|arbitration/.test(sub);
     };
-    const postingAmount = (p) => {
-      if (p.potential_amount != null && Number(p.potential_amount) > 0) return Number(p.potential_amount);
-      const prods = Array.isArray(p.products) ? p.products : [];
-      return prods.reduce((sum, pr) => sum + (Number(pr.price ?? pr.final_price ?? pr.sum_price ?? 0) || 0), 0);
-    };
+
     let count = 0;
     let total_amount = 0;
     postings.forEach((p) => {
       const num = p.posting_number || p.id;
       if (!num || !String(num).includes('-')) return;
       if (paid.has(String(num))) return;
-      if (exclude(p.status, p.substatus, p.cancellation)) return;
-      if (String(p.type || '').toLowerCase() === 'returns') return;
+      if (excludeStatus(p.status, p.substatus, p.cancellation)) return;
       count++;
-      total_amount += postingAmount(p);
+      total_amount += Number(p.potential_amount || 0);
     });
-    const payload = { count, total_amount: Math.round(total_amount * 100) / 100 };
-    if (fromCache && fetchError) payload.error = fetchError;
-    res.json(payload);
+
+    res.json({ count, total_amount: Math.round(total_amount * 100) / 100 });
   } catch (e) {
     console.error('orders-in-delivery:', e.message);
     res.json({ count: 0, total_amount: 0, error: e.message });
@@ -586,6 +560,8 @@ app.post('/api/postings/sync', async (req, res) => {
       byPostingNum.set(String(num), rec);
     }
     writeJson('postings.json', Array.from(byPostingNum.values()));
+    const meta = readJson('sync_meta.json', {});
+    writeJson('sync_meta.json', { ...meta, postings_synced_at: new Date().toISOString() });
     res.json({ ok: true, count: postings.length });
   } catch (e) {
     console.error('postings/sync error:', e.message);
@@ -884,6 +860,27 @@ function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
     if (amt > 0) g.totalPayout += amt;
     if (potential != null && g.potentialAmount == null) g.potentialAmount = potential;
     if ((s.items || []).length && (!g.items || !g.items.length)) g.items = s.items || [];
+  });
+
+  // Добавить заказы «в ожидании» (Заказ (ожидание), amount 0) из sales — чтобы они были в «Проданные товары» и в потенциальной прибыли, даже если у операции нет items или постинги с Ozon ещё не подтянулись
+  sales.forEach((s) => {
+    const pn = (s.posting?.posting_number || s.posting?.number || '').toString();
+    if (!isOrderPosting(pn) || deliveredPostings.has(pn)) return;
+    const amt = Number(s.amount ?? 0);
+    if (amt > 0) return;
+    const typeName = (s.operation_type_name || s.type || '').trim();
+    if (NON_GOODS_OPERATION_TYPES.some((t) => typeName.includes(t))) return;
+    if (/возврат|return/i.test(typeName)) return;
+    if (!/ожидание|expectation/i.test(typeName)) return;
+    if (byPosting.has(pn)) return;
+    const date = toD(s.date || s.operation_date || s.created_at);
+    const potential = s.potential_amount != null ? Number(s.potential_amount) : null;
+    byPosting.set(pn, {
+      date,
+      items: Array.isArray(s.items) && s.items.length ? s.items : [{ name: '—', sku: '', quantity: 1 }],
+      totalPayout: 0,
+      potentialAmount: potential,
+    });
   });
 
   // deliveredPostings уже построен выше по всем sales с amount > 0
@@ -1711,9 +1708,13 @@ app.post('/api/description', async (req, res) => {
 
 async function startupSync() {
   if (!process.env.OZON_CLIENT_ID || !process.env.OZON_API_KEY) return;
-  const existing = readJson('postings.json', []);
-  if (Array.isArray(existing) && existing.length > 0) return;
-  console.log('[startup] postings.json empty, syncing from Ozon...');
+  const meta = readJson('sync_meta.json', {});
+  const lastSync = meta.postings_synced_at ? new Date(meta.postings_synced_at).getTime() : 0;
+  if (Date.now() - lastSync < 4 * 60 * 60 * 1000) {
+    console.log('[startup] postings recently synced, skipping.');
+    return;
+  }
+  console.log('[startup] Syncing postings from Ozon...');
   try {
     const now = new Date();
     const toIso = now.toISOString().slice(0, 10) + 'T23:59:59.999Z';
@@ -1747,6 +1748,7 @@ async function startupSync() {
       await delay(150);
     }
     writeJson('postings.json', Array.from(byNum.values()));
+    writeJson('sync_meta.json', { ...meta, postings_synced_at: new Date().toISOString() });
     console.log(`[startup] Synced ${byNum.size} postings.`);
   } catch (e) {
     console.error('[startup] Sync failed:', e.message);
