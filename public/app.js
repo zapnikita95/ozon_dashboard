@@ -29,20 +29,26 @@ function restoreDashboardState() {
 }
 
 function setPeriodDates() {
-  const preset = document.getElementById('period-preset').value;
+  const presetEl = document.getElementById('period-preset');
+  const fromEl = document.getElementById('date-from');
+  const toEl = document.getElementById('date-to');
+  if (!presetEl || !fromEl || !toEl) return;
+  const preset = presetEl.value;
   const to = new Date();
   let from = new Date();
   if (preset === 'week') from.setDate(from.getDate() - 7);
   else if (preset === 'month') from.setMonth(from.getMonth() - 1);
   else if (preset === 'quarter') from.setMonth(from.getMonth() - 3);
-  document.getElementById('date-from').value = from.toISOString().slice(0, 10);
-  document.getElementById('date-to').value = to.toISOString().slice(0, 10);
+  fromEl.value = from.toISOString().slice(0, 10);
+  toEl.value = to.toISOString().slice(0, 10);
 }
 
 function getPeriod() {
+  const fromEl = document.getElementById('date-from');
+  const toEl = document.getElementById('date-to');
   return {
-    date_from: document.getElementById('date-from').value,
-    date_to: document.getElementById('date-to').value,
+    date_from: fromEl ? fromEl.value : '',
+    date_to: toEl ? toEl.value : '',
   };
 }
 
@@ -53,22 +59,23 @@ document.querySelectorAll('.nav-item').forEach((btn) => {
     document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
     btn.classList.add('active');
     const id = btn.dataset.section;
-    document.getElementById('section-' + id).classList.add('active');
+    const section = id ? document.getElementById('section-' + id) : null;
+    if (section) section.classList.add('active');
     if (id === 'sales') loadSalesSection();
     if (id === 'costs') loadCostsSection();
     if (id === 'products') loadProductsSection();
-    document.getElementById('sidebar').classList.remove('open');
-    document.getElementById('sidebar-overlay').classList.remove('open');
+    document.getElementById('sidebar')?.classList.remove('open');
+    document.getElementById('sidebar-overlay')?.classList.remove('open');
   });
 });
 
-document.getElementById('sidebar-toggle').addEventListener('click', () => {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('sidebar-overlay').classList.toggle('open');
+document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+  document.getElementById('sidebar')?.classList.toggle('open');
+  document.getElementById('sidebar-overlay')?.classList.toggle('open');
 });
-document.getElementById('sidebar-overlay').addEventListener('click', () => {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sidebar-overlay').classList.remove('open');
+document.getElementById('sidebar-overlay')?.addEventListener('click', () => {
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-overlay')?.classList.remove('open');
 });
 
 document.querySelectorAll('.subnav-item').forEach((btn) => {
@@ -77,7 +84,8 @@ document.querySelectorAll('.subnav-item').forEach((btn) => {
     document.querySelectorAll('.tab-pane').forEach((p) => p.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.dataset.tab;
-    document.getElementById('tab-' + tab).classList.add('active');
+    const pane = tab ? document.getElementById('tab-' + tab) : null;
+    if (pane) pane.classList.add('active');
     if (tab === 'stocks') loadStocks();
     if (tab === 'prices') loadPrices();
     if (tab === 'descriptions') loadDescriptions();
@@ -91,21 +99,25 @@ async function loadFinanceSummary() {
   const { date_from, date_to } = getPeriod();
   const q = new URLSearchParams({ date_from, date_to });
   const r = await fetch(API + '/finance-summary?' + q).then((x) => x.json()).catch(() => ({}));
-  document.getElementById('card-received').textContent = formatMoney(r.received);
-  document.getElementById('card-net').textContent = formatMoney(r.net_profit);
-  document.getElementById('card-expenses').textContent = formatMoney(r.expenses);
-  document.getElementById('card-ad').textContent = formatMoney(r.ad_spend);
-  document.getElementById('margin-value').textContent = (r.margin_percent != null ? r.margin_percent : '—') + ' %';
+  const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  set('card-received', formatMoney(r.received));
+  set('card-net', formatMoney(r.net_profit));
+  set('card-expenses', formatMoney(r.expenses));
+  set('card-ad', formatMoney(r.ad_spend));
+  set('margin-value', (r.margin_percent != null ? r.margin_percent : '—') + ' %');
   const total = Number(r.expenses) || 1;
   const adPct = ((Number(r.ad_spend) || 0) / total * 100).toFixed(0);
   const ozonPct = ((Number(r.ozon_expenses) || 0) / total * 100).toFixed(0);
   const consPct = ((Number(r.consumables) || 0) / total * 100).toFixed(0);
-  document.getElementById('bar-ad').style.width = adPct + '%';
-  document.getElementById('bar-ozon').style.width = ozonPct + '%';
-  document.getElementById('bar-consumables').style.width = consPct + '%';
-  document.getElementById('pct-ad').textContent = adPct + '%';
-  document.getElementById('pct-ozon').textContent = ozonPct + '%';
-  document.getElementById('pct-consumables').textContent = consPct + '%';
+  const barAd = document.getElementById('bar-ad');
+  const barOzon = document.getElementById('bar-ozon');
+  const barCons = document.getElementById('bar-consumables');
+  if (barAd) barAd.style.width = adPct + '%';
+  if (barOzon) barOzon.style.width = ozonPct + '%';
+  if (barCons) barCons.style.width = consPct + '%';
+  set('pct-ad', adPct + '%');
+  set('pct-ozon', ozonPct + '%');
+  set('pct-consumables', consPct + '%');
 }
 
 async function loadSales() {
@@ -116,7 +128,8 @@ async function loadSales() {
   const list = await fetch(API + '/sales?' + q).then((r) => r.json()).catch(() => []);
   let postings = [];
   try {
-    postings = await fetch(API + '/postings?' + q).then((r) => r.json()).catch(() => []);
+    const raw = await fetch(API + '/postings?' + q).then((r) => r.json()).catch(() => []);
+    postings = Array.isArray(raw) ? raw : [];
   } catch (e) {}
   const transactionPostingNumbers = new Set(list.map((s) => (s.posting?.posting_number || s.posting?.number || '').toString()));
   const toD = (s) => (s.date || s.operation_date || s.created_at || '').slice(0, 10);
@@ -140,6 +153,7 @@ async function loadSales() {
   });
   list.sort((a, b) => (toD(b) || '').localeCompare(toD(a) || '', 'ru'));
   const tbody = document.getElementById('sales-tbody');
+  if (!tbody) return list;
   tbody.innerHTML = list.map((s) => `
     <tr>
       <td>${toD(s)}</td>
@@ -195,8 +209,10 @@ document.querySelectorAll('.toggle-view[data-view]').forEach((btn) => {
     document.querySelectorAll('.toggle-view').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
     const view = btn.dataset.view;
-    document.getElementById('sales-view-operations').hidden = view !== 'operations';
-    document.getElementById('sales-view-orders').hidden = view !== 'orders';
+    const ops = document.getElementById('sales-view-operations');
+    const ord = document.getElementById('sales-view-orders');
+    if (ops) ops.hidden = view !== 'operations';
+    if (ord) ord.hidden = view !== 'orders';
   });
 });
 
@@ -268,6 +284,7 @@ function buildChart(sales) {
   const ordersData = labels.map((d) => byDay[d].orders);
 
   const legendContainer = document.getElementById('chart-legend');
+  if (!legendContainer) return;
   const datasets = [
     { id: 'received', label: 'Фактически получено', data: receivedData, borderColor: '#27272a', backgroundColor: 'rgba(39,39,42,0.08)', hidden: false },
     { id: 'amount', label: 'Сумма по Ozon', data: amountData, borderColor: '#71717a', backgroundColor: 'rgba(113,113,122,0.08)', hidden: false },
@@ -285,7 +302,9 @@ function buildChart(sales) {
   });
 
   if (chartInstance) chartInstance.destroy();
-  chartInstance = new Chart(document.getElementById('chart'), {
+  const chartEl = document.getElementById('chart');
+  if (!chartEl) return;
+  chartInstance = new Chart(chartEl, {
     type: 'line',
     data: {
       labels,
@@ -310,7 +329,7 @@ function buildChart(sales) {
   });
 }
 
-document.getElementById('btn-download-chart').addEventListener('click', () => {
+document.getElementById('btn-download-chart')?.addEventListener('click', () => {
   if (!chartInstance) return;
   const a = document.createElement('a');
   a.href = chartInstance.toBase64Image('image/png');
@@ -318,21 +337,22 @@ document.getElementById('btn-download-chart').addEventListener('click', () => {
   a.click();
 });
 
-document.getElementById('period-preset').addEventListener('change', () => {
+document.getElementById('period-preset')?.addEventListener('change', () => {
   setPeriodDates();
   saveDashboardState();
   loadSalesSection();
 });
-document.getElementById('date-from').addEventListener('change', () => { saveDashboardState(); loadSalesSection(); });
-document.getElementById('date-to').addEventListener('change', () => { saveDashboardState(); loadSalesSection(); });
+document.getElementById('date-from')?.addEventListener('change', () => { saveDashboardState(); loadSalesSection(); });
+document.getElementById('date-to')?.addEventListener('change', () => { saveDashboardState(); loadSalesSection(); });
 
 async function loadSalesSection() {
   await loadFinanceSummary();
   await loadSales();
 }
 
-document.getElementById('btn-sync-sales').addEventListener('click', async () => {
+document.getElementById('btn-sync-sales')?.addEventListener('click', async () => {
   const statusEl = document.getElementById('sync-sales-status');
+  if (!statusEl) return;
   statusEl.textContent = 'Загрузка…';
   statusEl.classList.remove('error', 'success');
   const period = getPeriod();
@@ -347,7 +367,7 @@ document.getElementById('btn-sync-sales').addEventListener('click', async () => 
   }
 });
 
-document.getElementById('btn-export-excel').addEventListener('click', () => {
+document.getElementById('btn-export-excel')?.addEventListener('click', () => {
   const { date_from, date_to } = getPeriod();
   const q = new URLSearchParams();
   if (date_from) q.set('date_from', date_from);
@@ -357,6 +377,7 @@ document.getElementById('btn-export-excel').addEventListener('click', () => {
 
 // ——— Costs section ———
 async function loadCostsSection() {
+  try {
   const r = await fetch(API + '/costs').then((x) => x.json()).catch(() => ({ items: [], total_value: 0 }));
 
   const expenses = await fetch(API + '/expense-items').then((x) => x.json()).catch(() => []);
@@ -377,6 +398,7 @@ async function loadCostsSection() {
 
   const byPreset = await fetch(API + '/costs/by-preset').then((x) => x.json()).catch(() => []);
   const cardsEl = document.getElementById('preset-cards');
+  if (cardsEl) {
   cardsEl.innerHTML = byPreset.map((p) => `
     <div class="preset-card">
       <h4>${p.preset_name}</h4>
@@ -384,9 +406,11 @@ async function loadCostsSection() {
       <div class="total">Итого: ${formatMoney(p.total)}</div>
     </div>
   `).join('');
+  }
 
   const presets = await fetch(API + '/product-type-presets').then((x) => x.json()).catch(() => []);
   const presetListEl = document.getElementById('preset-list');
+  if (presetListEl) {
   presetListEl.innerHTML = presets.map((p) => `<li><span class="preset-name">${p.name}</span> <button type="button" class="btn btn-small btn-secondary" data-delete-preset="${p.id}">Удалить</button></li>`).join('');
   presetListEl.querySelectorAll('[data-delete-preset]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -394,9 +418,10 @@ async function loadCostsSection() {
       loadCostsSection();
     });
   });
+  }
 
-  const expenses = await fetch(API + '/expense-items').then((x) => x.json()).catch(() => []);
   const tbody = document.getElementById('expense-tbody');
+  if (!tbody) return;
   tbody.innerHTML = expenses.map((e) => `
     <tr>
       <td class="td-actions"><button type="button" class="expense-star ${e.starred ? 'starred' : ''}" data-id="${e.id}" aria-label="${e.starred ? 'Убрать из избранного' : 'Показать остаток наверху'}">${e.starred ? '★' : '☆'}</button></td>
@@ -434,8 +459,9 @@ async function loadCostsSection() {
 
   const expensePerPreset = await fetch(API + '/expense-per-preset').then((x) => x.json()).catch(() => ({}));
   const table = document.getElementById('expense-per-preset-table');
-  const thead = table.querySelector('thead');
+  const thead = table?.querySelector('thead');
   const matrixTbody = document.getElementById('expense-per-preset-tbody');
+  if (thead && matrixTbody) {
   thead.innerHTML = '<tr><th>Тип / Расходник</th>' + expenses.map((e) => `<th>${e.name}</th>`).join('') + '</tr>';
   const presetRows = presets.map((p) => {
     const cells = expenses.map((e) => {
@@ -451,10 +477,12 @@ async function loadCostsSection() {
       loadCostsSection();
     });
   });
+  }
 
   const types = await fetch(API + '/product-types').then((x) => x.json()).catch(() => ({}));
   const costItems = r.items || [];
   const typesTbody = document.getElementById('product-types-tbody');
+  if (typesTbody) {
   typesTbody.innerHTML = costItems.map((i) => {
     const key = i.offer_id || String(i.product_id);
     const current = types[i.offer_id] ?? types[String(i.product_id)];
@@ -480,8 +508,10 @@ async function loadCostsSection() {
       loadCostsSection();
     });
   });
+  }
 
   const costsTbody = document.getElementById('costs-tbody');
+  if (costsTbody) {
   const defaultDemand = 1;
   costsTbody.innerHTML = costItems.map((i) => {
     const demand = defaultDemand;
@@ -498,17 +528,22 @@ async function loadCostsSection() {
     </tr>
   `;
   }).join('');
+  }
+
+  } catch (err) {
+    console.error('loadCostsSection error:', err);
+  }
 }
 
 // ——— Expense modal ———
-document.getElementById('btn-add-expense').addEventListener('click', () => {
-  document.getElementById('modal-expense').hidden = false;
-  document.getElementById('form-expense').reset();
+document.getElementById('btn-add-expense')?.addEventListener('click', () => {
+  const modal = document.getElementById('modal-expense');
+  if (modal) { modal.hidden = false; document.getElementById('form-expense')?.reset(); }
 });
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
-  btn.addEventListener('click', () => btn.closest('.modal').hidden = true);
+  btn.addEventListener('click', () => btn.closest('.modal') && (btn.closest('.modal').hidden = true));
 });
-document.getElementById('form-expense').addEventListener('submit', async (e) => {
+document.getElementById('form-expense')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const body = {
@@ -518,22 +553,23 @@ document.getElementById('form-expense').addEventListener('submit', async (e) => 
     unit: (form.unit && form.unit.value) || 'шт',
   };
   await fetch(API + '/expense-items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  document.getElementById('modal-expense').hidden = true;
+  const modal = document.getElementById('modal-expense');
+  if (modal) modal.hidden = true;
   loadCostsSection();
 });
 
-document.getElementById('btn-add-preset').addEventListener('click', () => {
-  document.getElementById('modal-preset').hidden = false;
-  document.getElementById('form-preset').reset();
-  document.querySelector('#form-preset input[name="name"]').focus();
+document.getElementById('btn-add-preset')?.addEventListener('click', () => {
+  const modal = document.getElementById('modal-preset');
+  if (modal) { modal.hidden = false; document.getElementById('form-preset')?.reset(); document.querySelector('#form-preset input[name="name"]')?.focus(); }
 });
 
-document.getElementById('form-preset').addEventListener('submit', async (e) => {
+document.getElementById('form-preset')?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const name = document.querySelector('#form-preset input[name="name"]').value.trim();
+  const name = document.querySelector('#form-preset input[name="name"]')?.value?.trim();
   if (!name) return;
   await fetch(API + '/product-type-presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-  document.getElementById('modal-preset').hidden = true;
+  const modal = document.getElementById('modal-preset');
+  if (modal) modal.hidden = true;
   loadCostsSection();
 });
 
@@ -558,12 +594,12 @@ async function loadStocks() {
       <td>${stock}</td>
     </tr>`;
   }).join('');
-  document.getElementById('stocks-select-all').addEventListener('change', (e) => {
+  document.getElementById('stocks-select-all')?.addEventListener('change', (e) => {
     tbody.querySelectorAll('.stock-cb').forEach((cb) => { cb.checked = e.target.checked; });
   });
 }
 
-document.getElementById('btn-plus10').addEventListener('click', async () => {
+document.getElementById('btn-plus10')?.addEventListener('click', async () => {
   const productIds = [];
   const offerIds = [];
   document.querySelectorAll('.stock-cb:checked').forEach((cb) => {
@@ -574,7 +610,7 @@ document.getElementById('btn-plus10').addEventListener('click', async () => {
   loadStocks();
 });
 
-document.getElementById('input-stock-file').addEventListener('change', async (e) => {
+document.getElementById('input-stock-file')?.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
   const statusEl = document.getElementById('stock-upload-status');
@@ -612,7 +648,7 @@ async function loadPrices() {
   }).join('');
 }
 
-document.getElementById('btn-save-prices').addEventListener('click', async () => {
+document.getElementById('btn-save-prices')?.addEventListener('click', async () => {
   const prices = [];
   document.querySelectorAll('#prices-tbody input[type="number"]').forEach((inp) => {
     const v = parseFloat(inp.value);
@@ -641,11 +677,12 @@ async function loadDescriptions() {
   });
 }
 
-document.getElementById('btn-save-description').addEventListener('click', async () => {
-  const offerId = document.getElementById('description-offer-id').value;
-  const text = document.getElementById('description-text').value;
+document.getElementById('btn-save-description')?.addEventListener('click', async () => {
+  const offerId = document.getElementById('description-offer-id')?.value;
+  const text = document.getElementById('description-text')?.value;
   await fetch(API + '/description', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ offer_id: offerId, text }) });
-  document.getElementById('modal-description').hidden = true;
+  const modal = document.getElementById('modal-description');
+  if (modal) modal.hidden = true;
 });
 
 function formatMoney(v) {
@@ -655,10 +692,16 @@ function formatMoney(v) {
   return new Intl.NumberFormat('ru-RU', { style: 'decimal', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n) + ' ₽';
 }
 
-// Init
-if (!restoreDashboardState()) setPeriodDates();
-saveDashboardState();
-loadSalesSection();
-bindTableSort('orders-table');
-bindTableSort('ad-codes-table');
-bindTableSort('sold-goods-table');
+// Init — не падаем, если что-то не загрузилось или элементов нет
+(function init() {
+  try {
+    if (!restoreDashboardState()) setPeriodDates();
+    saveDashboardState();
+    loadSalesSection();
+    bindTableSort('orders-table');
+    bindTableSort('ad-codes-table');
+    bindTableSort('sold-goods-table');
+  } catch (err) {
+    console.error('Ozon Dashboard init error:', err);
+  }
+})();
