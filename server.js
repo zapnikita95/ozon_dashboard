@@ -324,13 +324,24 @@ app.get('/api/sales/chart-data', (req, res) => {
     byDay[dOp].potential += Number(s.potential_amount ?? 0);
   });
 
-  const labels = Object.keys(byDay).sort();
+  const orderCountByDay = {};
+  postings.forEach((p) => {
+    const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
+    if (!d) return;
+    if (dateFrom && d < dateFrom) return;
+    if (dateTo && d > dateTo) return;
+    const num = p.posting_number || p.id;
+    if (num && String(num).includes('-')) orderCountByDay[d] = (orderCountByDay[d] || 0) + 1;
+  });
+
+  const allDays = new Set([...Object.keys(byDay), ...Object.keys(orderCountByDay)]);
+  const labels = Array.from(allDays).sort();
   res.json({
     labels,
-    received: labels.map((d) => byDay[d].received),
-    expenses: labels.map((d) => byDay[d].ozon_expenses + byDay[d].consumables),
-    orders: labels.map((d) => (byDay[d].orderPostings && byDay[d].orderPostings.size) || 0),
-    potential: labels.map((d) => byDay[d].potential),
+    received: labels.map((d) => (byDay[d] && byDay[d].received) || 0),
+    expenses: labels.map((d) => (byDay[d] ? byDay[d].ozon_expenses + byDay[d].consumables : 0)),
+    orders: labels.map((d) => orderCountByDay[d] || 0),
+    potential: labels.map((d) => (byDay[d] && byDay[d].potential) || 0),
   });
 });
 
@@ -731,6 +742,12 @@ function expenseTotalCost(item) {
   if (!Array.isArray(b) || !b.length) return Number(item.cost) ?? 0;
   return b.reduce((s, x) => s + (Number(x.cost) || 0), 0);
 }
+function expenseEarliestBatchDate(item) {
+  const b = item.batches;
+  if (!Array.isArray(b) || !b.length) return null;
+  const dates = b.map((x) => (x.purchase_date || '').toString().slice(0, 10)).filter(Boolean);
+  return dates.length ? dates.sort()[0] : null;
+}
 
 app.get('/api/expense-items', (req, res) => {
   const data = readJson('expense_items.json', []);
@@ -856,11 +873,17 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
   expenseItems = expenseItems.map((e) => normalizeExpenseItem({ ...e }));
   const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
   const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
+  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
 
-  const soldCountByPreset = {};
-  sales
-    .filter((s) => Number(s.amount ?? 0) > 0 && Array.isArray(s.items) && s.items.length)
-    .forEach((s) => {
+  const salesWithItems = sales.filter((s) => Number(s.amount ?? 0) > 0 && Array.isArray(s.items) && s.items.length);
+
+  const result = expenseItems.map((e) => {
+    const earliestDate = expenseEarliestBatchDate(e);
+    const salesForConsumed = earliestDate
+      ? salesWithItems.filter((s) => toD(s.date || s.operation_date || s.created_at) >= earliestDate)
+      : salesWithItems;
+    const soldCountByPreset = {};
+    salesForConsumed.forEach((s) => {
       (s.items || []).forEach((it) => {
         const sku = it.sku != null ? String(it.sku) : '';
         const directOfferId = it.offer_id != null ? String(it.offer_id) : '';
@@ -871,8 +894,6 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
         soldCountByPreset[presetId] = (soldCountByPreset[presetId] || 0) + (Number(it.quantity) || 1);
       });
     });
-
-  const result = expenseItems.map((e) => {
     let consumed = 0;
     Object.keys(expensePerPreset || {}).forEach((presetId) => {
       const q = Number((expensePerPreset[presetId] || {})[e.id]) || 0;
