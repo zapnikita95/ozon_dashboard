@@ -192,11 +192,12 @@
               <tr>
                 <th class="th-center" style="width:48px" title="Показать остаток наверху">★</th>
                 <th>Название</th>
+                <th>Дата покупки</th>
                 <th>Стоимость (₽)</th>
                 <th>Кол-во в закупке</th>
                 <th>Ед. изм.</th>
                 <th>Остаток</th>
-                <th class="th-center" style="width:100px"></th>
+                <th class="th-center" style="width:140px"></th>
               </tr>
             </thead>
             <tbody id="expense-tbody"></tbody>
@@ -320,12 +321,31 @@
       <h3>Добавить расходник</h3>
       <form id="form-expense">
         <label>Название <input type="text" name="name" required></label>
+        <label>Дата покупки <input type="date" name="purchase_date" id="form-expense-purchase-date"></label>
         <label>Стоимость закупки (₽) <input type="number" name="cost" step="0.01" required></label>
         <label>Кол-во в закупке <input type="number" name="quantity" min="1" required></label>
         <label>Ед. изм. <input type="text" name="unit" value="шт" placeholder="шт, кг, л"></label>
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
           <button type="submit" class="btn btn-primary">Добавить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-expense-batch" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Добавить завоз</h3>
+      <p class="hint" id="modal-batch-expense-name"></p>
+      <form id="form-expense-batch">
+        <input type="hidden" name="expense_id" id="form-batch-expense-id">
+        <label>Дата покупки <input type="date" name="purchase_date" id="form-batch-purchase-date" required></label>
+        <label>Кол-во <input type="number" name="quantity" min="1" required></label>
+        <label>Цена за ед. (₽) <input type="number" name="price" step="0.01" placeholder="за единицу"></label>
+        <label>Стоимость закупки (₽) <input type="number" name="cost" step="0.01" placeholder="сумма партии"></label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
+          <button type="submit" class="btn btn-primary">Добавить завоз</button>
         </div>
       </form>
     </div>

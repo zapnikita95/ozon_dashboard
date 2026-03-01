@@ -9,7 +9,9 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 const PORT = process.env.PORT || 3000;
 // Для Railway: примонтируйте Volume и задайте DATA_DIR=/data (или путь к тому), иначе при каждом деплое данные (расходники, продажи и т.д.) будут теряться.
+// Приложение никогда не перезаписывает JSON-файлы пустыми данными при старте — только по действиям пользователя (POST/PUT/DELETE).
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+if (process.env.NODE_ENV !== 'test') console.log('DATA_DIR=', DATA_DIR);
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -159,10 +161,14 @@ app.post('/api/stocks/update', async (req, res) => {
 // ——— Prices ———
 app.get('/api/prices', async (req, res) => {
   try {
-    const data = await ozon.getPrices({});
-    res.json(data.result?.items || []);
+    const data = await ozon.getPrices({ filter: { visibility: 'ALL' }, limit: 1000 });
+    const items = data.result?.items || [];
+    if (Array.isArray(items) && items.length) writeJson('prices_cache.json', items);
+    res.json(items);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('api/prices:', e.message);
+    const cached = readJson('prices_cache.json', []);
+    res.status(200).json(Array.isArray(cached) ? cached : []);
   }
 });
 
@@ -445,7 +451,8 @@ app.get('/api/sales/grouped', (req, res) => {
 
   const total_sold = orders.reduce((sum, o) => sum + o.income, 0);
   const ozon_expenses_total = list.filter((s) => Number(s.amount ?? 0) < 0).reduce((sum, s) => sum + Math.abs(Number(s.amount ?? 0)), 0);
-  const expenseItems = readJson('expense_items.json', []);
+  let expenseItems = readJson('expense_items.json', []);
+  expenseItems = expenseItems.map((e) => normalizeExpenseItem({ ...e }));
   const expensePerPreset = readJson('expense_per_preset.json', {});
   const productTypes = readJson('product_types.json', {});
   const products = readJson('products_cache.json', []);
@@ -458,8 +465,8 @@ app.get('/api/sales/grouped', (req, res) => {
     let sum = 0;
     (expenseItems || []).forEach((e) => {
       const q = Number(cons[e.id]) || 0;
-      const total = Number(e.cost) || 0;
-      const units = Number(e.quantity) || 1;
+      const total = expenseTotalCost(e);
+      const units = expenseTotalQuantity(e) || 1;
       sum += q * (total / units);
     });
     return sum;
@@ -543,13 +550,46 @@ app.get('/api/sales/sold-goods', (req, res) => {
 
 // ——— Expense items & product types ———
 // Расходники хранятся в expense_items.json; приложение никогда не перезаписывает файл пустым массивом при старте — только по действиям пользователя (POST/PUT/DELETE).
+/** Нормализация: если нет batches, создать одну партию из quantity/cost/purchase_date */
+function normalizeExpenseItem(item) {
+  if (Array.isArray(item.batches) && item.batches.length) return item;
+  const q = Number(item.quantity) ?? 1;
+  const c = Number(item.cost) ?? 0;
+  const d = (item.purchase_date || new Date().toISOString().slice(0, 10)).toString().slice(0, 10);
+  item.batches = [{ id: (item.id || '') + '_b1', purchase_date: d, quantity: q, price: c, cost: c }];
+  return item;
+}
+function expenseTotalQuantity(item) {
+  const b = item.batches;
+  if (!Array.isArray(b) || !b.length) return Number(item.quantity) ?? 0;
+  return b.reduce((s, x) => s + (Number(x.quantity) || 0), 0);
+}
+function expenseTotalCost(item) {
+  const b = item.batches;
+  if (!Array.isArray(b) || !b.length) return Number(item.cost) ?? 0;
+  return b.reduce((s, x) => s + (Number(x.cost) || 0), 0);
+}
+
 app.get('/api/expense-items', (req, res) => {
-  res.json(readJson('expense_items.json', []));
+  const data = readJson('expense_items.json', []);
+  const out = data.map((e) => normalizeExpenseItem({ ...e }));
+  res.json(out);
 });
 
 app.post('/api/expense-items', (req, res) => {
   const data = readJson('expense_items.json', []);
-  const item = { id: String(Date.now()), name: '', cost: 0, unit: 'шт', ...req.body };
+  const body = req.body || {};
+  const purchaseDate = (body.purchase_date || new Date().toISOString().slice(0, 10)).toString().slice(0, 10);
+  const quantity = Number(body.quantity) || 1;
+  const cost = Number(body.cost) ?? 0;
+  const price = Number(body.price) ?? cost;
+  const item = {
+    id: String(Date.now()),
+    name: body.name || '',
+    unit: body.unit || 'шт',
+    starred: !!body.starred,
+    batches: [{ id: String(Date.now()) + '_b1', purchase_date: purchaseDate, quantity, price, cost }],
+  };
   data.push(item);
   writeJson('expense_items.json', data);
   res.json(item);
@@ -559,9 +599,29 @@ app.put('/api/expense-items/:id', (req, res) => {
   const data = readJson('expense_items.json', []);
   const i = data.findIndex((x) => String(x.id) === String(req.params.id));
   if (i === -1) return res.status(404).json({ error: 'Not found' });
-  data[i] = { ...data[i], ...req.body };
+  data[i] = normalizeExpenseItem({ ...data[i] });
+  const body = req.body || {};
+  if (body.batches !== undefined) data[i].batches = body.batches;
+  ['name', 'unit', 'starred'].forEach((k) => { if (body[k] !== undefined) data[i][k] = body[k]; });
   writeJson('expense_items.json', data);
-  res.json(data[i]);
+  res.json(normalizeExpenseItem(data[i]));
+});
+
+app.post('/api/expense-items/:id/batches', (req, res) => {
+  const data = readJson('expense_items.json', []);
+  const i = data.findIndex((x) => String(x.id) === String(req.params.id));
+  if (i === -1) return res.status(404).json({ error: 'Not found' });
+  const item = normalizeExpenseItem(data[i]);
+  if (!Array.isArray(item.batches)) item.batches = [];
+  const body = req.body || {};
+  const purchaseDate = (body.purchase_date || new Date().toISOString().slice(0, 10)).toString().slice(0, 10);
+  const quantity = Number(body.quantity) || 1;
+  const cost = Number(body.cost) ?? Number(body.price) * quantity;
+  const price = Number(body.price) ?? (quantity ? cost / quantity : 0);
+  item.batches.push({ id: String(Date.now()) + '_b' + (item.batches.length + 1), purchase_date: purchaseDate, quantity, price, cost });
+  data[i] = item;
+  writeJson('expense_items.json', data);
+  res.json(item);
 });
 
 app.delete('/api/expense-items/:id', (req, res) => {
@@ -629,8 +689,9 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
   const sales = readJson('sales.json', []);
   const products = readJson('products_cache.json', []);
   const productTypes = readJson('product_types.json', {});
-  const expenseItems = readJson('expense_items.json', []);
   const expensePerPreset = readJson('expense_per_preset.json', {});
+  let expenseItems = readJson('expense_items.json', []);
+  expenseItems = expenseItems.map((e) => normalizeExpenseItem({ ...e }));
   const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
 
   const soldCountByPreset = {};
@@ -654,7 +715,7 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
       const sold = soldCountByPreset[presetId] || 0;
       consumed += q * sold;
     });
-    const quantity = Number(e.quantity) || 0;
+    const quantity = expenseTotalQuantity(e);
     const remaining = Math.max(0, quantity - consumed);
     return {
       id: e.id,
@@ -669,16 +730,17 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
 });
 
 app.get('/api/costs/by-preset', (req, res) => {
-  const expenseItems = readJson('expense_items.json', []);
+  let expenseItems = readJson('expense_items.json', []);
+  expenseItems = expenseItems.map((e) => normalizeExpenseItem({ ...e }));
   const expensePerPreset = readJson('expense_per_preset.json', {});
   const presets = readJson('product_type_presets.json', []);
   const list = (presets.length ? presets : [{ id: 'diffuser_50', name: 'Диффузор 50 мл' }, { id: 'diffuser_100', name: 'Диффузор 100 мл' }, { id: 'sachet', name: 'Саше' }]).map((p) => {
     const cons = expensePerPreset[p.id] || {};
     const lines = expenseItems.map((e) => {
       const q = Number(cons[e.id]) || 0;
-      const total = Number(e.cost) || 0;
-      const units = Number(e.quantity) || 1;
-      const costPerUnitExp = total / units;
+      const totalCost = expenseTotalCost(e);
+      const totalUnits = expenseTotalQuantity(e) || 1;
+      const costPerUnitExp = totalCost / totalUnits;
       return { expense_id: e.id, name: e.name, quantity: q, unit: e.unit || 'шт', cost_per_unit: costPerUnitExp, total: q * costPerUnitExp };
     }).filter((l) => l.quantity > 0);
     const total = lines.reduce((a, l) => a + l.total, 0);
@@ -690,7 +752,8 @@ app.get('/api/costs/by-preset', (req, res) => {
 // ——— Costs ———
 app.get('/api/costs', async (req, res) => {
   try {
-    const expenseItems = readJson('expense_items.json', []);
+    let expenseItems = readJson('expense_items.json', []);
+    expenseItems = expenseItems.map((e) => normalizeExpenseItem({ ...e }));
     const productTypes = readJson('product_types.json', {});
     let presets = readJson('product_type_presets.json', []);
     if (!presets.length) {
@@ -726,8 +789,8 @@ app.get('/api/costs', async (req, res) => {
       let sum = 0;
       expenseItems.forEach((e) => {
         const q = Number(cons[e.id]) || 0;
-        const total = Number(e.cost) || 0;
-        const units = Number(e.quantity) || 1;
+        const total = expenseTotalCost(e);
+        const units = expenseTotalQuantity(e) || 1;
         sum += q * (total / units);
       });
       return sum;
@@ -814,7 +877,10 @@ app.get('/api/finance-summary', (req, res) => {
   });
   const total_gross = received + ozon_expenses + ad_expenses;
 
-  const expenseItems = readJson('expense_items.json', []);
+  const expenseItems = (() => {
+    let arr = readJson('expense_items.json', []);
+    return arr.map((e) => normalizeExpenseItem({ ...e }));
+  })();
   const expensePerPreset = readJson('expense_per_preset.json', {});
   const productTypes = readJson('product_types.json', {});
   const products = readJson('products_cache.json', []);
@@ -827,8 +893,8 @@ app.get('/api/finance-summary', (req, res) => {
     let sum = 0;
     (expenseItems || []).forEach((e) => {
       const q = Number(cons[e.id]) || 0;
-      const total = Number(e.cost) || 0;
-      const units = Number(e.quantity) || 1;
+      const total = expenseTotalCost(e);
+      const units = expenseTotalQuantity(e) || 1;
       sum += q * (total / units);
     });
     return sum;

@@ -1,6 +1,8 @@
 const API = '/api';
 
 const DASHBOARD_STATE_KEY = 'ozon_dashboard_state';
+const SECTION_KEY = 'ozon_dashboard_section';
+const TAB_KEY = 'ozon_dashboard_tab';
 
 function showToast(message, type = 'success') {
   const container = document.getElementById('toast-container');
@@ -114,6 +116,7 @@ document.querySelectorAll('.nav-item').forEach((btn) => {
     document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
     btn.classList.add('active');
     const id = btn.dataset.section;
+    try { localStorage.setItem(SECTION_KEY, id || ''); } catch (e) {}
     const section = id ? document.getElementById('section-' + id) : null;
     if (section) section.classList.add('active');
     if (id === 'sales') loadSalesSection();
@@ -139,6 +142,7 @@ document.querySelectorAll('.subnav-item').forEach((btn) => {
     document.querySelectorAll('.tab-pane').forEach((p) => p.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.dataset.tab;
+    try { localStorage.setItem(TAB_KEY, tab || ''); } catch (e) {}
     const pane = tab ? document.getElementById('tab-' + tab) : null;
     if (pane) pane.classList.add('active');
     if (tab === 'stocks') loadStocks();
@@ -566,15 +570,23 @@ async function loadCostsSection() {
   tbody.innerHTML = expenses.map((e) => {
     const r = remainderById.get(e.id);
     const remaining = r ? r.remaining : (e.remaining != null && e.remaining !== '' ? e.remaining : '—');
+    const batches = Array.isArray(e.batches) ? e.batches : [];
+    const totalQty = batches.reduce((s, b) => s + (Number(b.quantity) || 0), 0) || (e.quantity ?? '—');
+    const totalCost = batches.reduce((s, b) => s + (Number(b.cost) || 0), 0);
+    const dateText = batches.length === 0 ? '—' : batches.length === 1 ? (batches[0].purchase_date || '—') : batches.length + ' завозов';
     return `
     <tr>
       <td class="td-actions"><button type="button" class="expense-star ${e.starred ? 'starred' : ''}" data-id="${e.id}" aria-label="${e.starred ? 'Убрать из избранного' : 'Показать остаток наверху'}">${e.starred ? '★' : '☆'}</button></td>
       <td>${e.name}</td>
-      <td>${e.cost}</td>
-      <td>${e.quantity ?? 1}</td>
+      <td>${dateText}</td>
+      <td>${totalCost || e.cost || '—'}</td>
+      <td>${totalQty}</td>
       <td>${e.unit || 'шт'}</td>
       <td>${remaining}</td>
-      <td class="td-actions"><button type="button" class="btn btn-small btn-secondary" data-delete-expense="${e.id}">Удалить</button></td>
+      <td class="td-actions">
+        <button type="button" class="btn btn-small btn-secondary btn-add-batch" data-id="${e.id}" data-name="${(e.name || '').replace(/"/g, '&quot;')}">+ Завоз</button>
+        <button type="button" class="btn btn-small btn-secondary" data-delete-expense="${e.id}">Удалить</button>
+      </td>
     </tr>
   `;
   }).join('');
@@ -582,6 +594,24 @@ async function loadCostsSection() {
     btn.addEventListener('click', async () => {
       await fetch(API + '/expense-items/' + btn.dataset.deleteExpense, { method: 'DELETE' });
       loadCostsSection();
+    });
+  });
+  tbody.querySelectorAll('.btn-add-batch').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const name = btn.dataset.name || '';
+      const modal = document.getElementById('modal-expense-batch');
+      const form = document.getElementById('form-expense-batch');
+      if (modal && form) {
+        document.getElementById('form-batch-expense-id').value = id;
+        document.getElementById('modal-batch-expense-name').textContent = 'Расходник: ' + name;
+        const today = new Date().toISOString().slice(0, 10);
+        document.getElementById('form-batch-purchase-date').value = today;
+        form.cost.value = '';
+        form.price.value = '';
+        form.quantity.value = '1';
+        modal.hidden = false;
+      }
     });
   });
   tbody.querySelectorAll('.expense-star').forEach((btn) => {
@@ -690,7 +720,13 @@ document.getElementById('btn-refresh-costs')?.addEventListener('click', async ()
 // ——— Expense modal ———
 document.getElementById('btn-add-expense')?.addEventListener('click', () => {
   const modal = document.getElementById('modal-expense');
-  if (modal) { modal.hidden = false; document.getElementById('form-expense')?.reset(); }
+  if (modal) {
+    document.getElementById('form-expense')?.reset();
+    const today = new Date().toISOString().slice(0, 10);
+    const dateInp = document.getElementById('form-expense-purchase-date');
+    if (dateInp) dateInp.value = today;
+    modal.hidden = false;
+  }
 });
 document.querySelectorAll('[data-close-modal]').forEach((btn) => {
   btn.addEventListener('click', () => btn.closest('.modal') && (btn.closest('.modal').hidden = true));
@@ -700,6 +736,7 @@ document.getElementById('form-expense')?.addEventListener('submit', async (e) =>
   const form = e.target;
   const body = {
     name: form.name.value,
+    purchase_date: form.purchase_date?.value || new Date().toISOString().slice(0, 10),
     cost: Number(form.cost.value),
     quantity: Number(form.quantity.value) || 1,
     unit: (form.unit && form.unit.value) || 'шт',
@@ -707,6 +744,25 @@ document.getElementById('form-expense')?.addEventListener('submit', async (e) =>
   await fetch(API + '/expense-items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const modal = document.getElementById('modal-expense');
   if (modal) modal.hidden = true;
+  loadCostsSection();
+});
+
+document.getElementById('form-expense-batch')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const id = form.elements?.expense_id?.value || document.getElementById('form-batch-expense-id')?.value;
+  if (!id) return;
+  const costVal = Number(form.cost?.value);
+  const priceVal = Number(form.price?.value);
+  const qty = Number(form.quantity?.value) || 1;
+  const body = {
+    purchase_date: form.purchase_date?.value || new Date().toISOString().slice(0, 10),
+    quantity: qty,
+    price: priceVal || (qty ? costVal / qty : 0),
+    cost: costVal || priceVal * qty,
+  };
+  await fetch(API + '/expense-items/' + encodeURIComponent(id) + '/batches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  document.getElementById('modal-expense-batch').hidden = true;
   loadCostsSection();
 });
 
@@ -925,7 +981,36 @@ function formatMoney(v) {
   try {
     if (!restoreDashboardState()) setPeriodDates();
     saveDashboardState();
-    loadSalesSection();
+
+    const savedSection = (typeof localStorage !== 'undefined' && localStorage.getItem(SECTION_KEY)) || 'sales';
+    const sectionEl = document.querySelector('.nav-item[data-section="' + savedSection + '"]');
+    const sectionPanel = document.getElementById('section-' + savedSection);
+    if (sectionEl && sectionPanel) {
+      document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
+      sectionEl.classList.add('active');
+      sectionPanel.classList.add('active');
+      if (savedSection === 'sales') loadSalesSection();
+      else if (savedSection === 'costs') loadCostsSection();
+      else if (savedSection === 'products') {
+        loadProductsSection();
+        const savedTab = localStorage.getItem(TAB_KEY) || 'stocks';
+        const tabBtn = document.querySelector('.subnav-item[data-tab="' + savedTab + '"]');
+        const tabPane = document.getElementById('tab-' + savedTab);
+        if (tabBtn && tabPane) {
+          document.querySelectorAll('.subnav-item').forEach((b) => b.classList.remove('active'));
+          document.querySelectorAll('.tab-pane').forEach((p) => p.classList.remove('active'));
+          tabBtn.classList.add('active');
+          tabPane.classList.add('active');
+          if (savedTab === 'stocks') loadStocks();
+          else if (savedTab === 'prices') loadPrices();
+          else if (savedTab === 'descriptions') loadDescriptions();
+        }
+      }
+    } else {
+      loadSalesSection();
+    }
+
     bindTableSort('orders-table');
     bindTableSort('ad-codes-table');
     bindTableSort('sold-goods-table');
