@@ -927,13 +927,17 @@ document.getElementById('btn-save-stocks')?.addEventListener('click', async () =
       stock,
     });
   });
-  if (!items.length) return;
+  if (!items.length) {
+    showToast('Введите новые остатки в колонке «Новый остаток» и нажмите сохранить.', 'error');
+    return;
+  }
+  showToast('Отправляю остатки на Ozon…');
   const res = await fetch(API + '/stocks/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) }).then((r) => r.json()).catch(() => ({}));
   if (res.ok) {
-    showToast('Обновлено остатков: ' + (res.updated ?? 0));
+    showToast('Остатки сохранены на Ozon. Обновлено товаров: ' + (res.updated ?? 0));
     loadStocks();
   } else {
-    showToast(res.error || 'Ошибка', 'error');
+    showToast(res.error || 'Ошибка сохранения', 'error');
   }
 });
 
