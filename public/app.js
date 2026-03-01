@@ -371,11 +371,14 @@ function buildChart(sales) {
     const dOp = (s.date || s.operation_date || s.created_at || '').slice(0, 10);
     const dDel = (s.delivery_date || s.date || s.operation_date || s.created_at || '').slice(0, 10);
     if (!dOp) return;
-    if (!byDay[dOp]) byDay[dOp] = { date: dOp, received: 0, amount: 0, orders: 0, potential: 0 };
-    if (dDel && !byDay[dDel]) byDay[dDel] = { date: dDel, received: 0, amount: 0, orders: 0, potential: 0 };
+    if (!byDay[dOp]) byDay[dOp] = { date: dOp, received: 0, amount: 0, orderPostings: new Set(), potential: 0 };
+    if (dDel && !byDay[dDel]) byDay[dDel] = { date: dDel, received: 0, amount: 0, orderPostings: new Set(), potential: 0 };
     const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
+    const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
+    const isOrderPosting = postingNumber && String(postingNumber).includes('-');
     byDay[dOp].amount += Number(s.amount ?? 0);
-    byDay[dOp].orders += 1;
+    if (isOrderPosting && amt > 0) byDay[dOp].orderPostings.add(String(postingNumber));
+    if (dDel && isOrderPosting && amt > 0) byDay[dDel].orderPostings.add(String(postingNumber));
     byDay[dOp].potential += Number(s.potential_amount ?? 0);
     if (dDel) byDay[dDel].received += amt > 0 ? amt : 0;
     else byDay[dOp].received += amt > 0 ? amt : 0;
@@ -383,8 +386,8 @@ function buildChart(sales) {
   const labels = Object.keys(byDay).sort();
   const receivedData = labels.map((d) => byDay[d].received);
   const amountData = labels.map((d) => byDay[d].amount);
-  const ordersData = labels.map((d) => byDay[d].orders);
-  const ordersBarsData = labels.map((d) => Math.max(0, byDay[d].orders));
+  const ordersData = labels.map((d) => (byDay[d].orderPostings && byDay[d].orderPostings.size) || 0);
+  const ordersBarsData = labels.map((d) => Math.max(0, (byDay[d].orderPostings && byDay[d].orderPostings.size) || 0));
   const potentialData = labels.map((d) => byDay[d].potential);
 
   const legendContainer = document.getElementById('chart-legend');

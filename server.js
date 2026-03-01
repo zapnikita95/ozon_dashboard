@@ -341,11 +341,14 @@ app.post('/api/sales/sync', async (req, res) => {
       try {
         const detail = await ozon.getPostingByNumber(postingNumber);
         const products = detail?.result?.products || [];
-        s.items = products.map((p) => ({
-          sku: p.product_id != null ? String(p.product_id) : (p.sku != null ? String(p.sku) : ''),
-          quantity: Number(p.quantity) || 1,
-          name: p.name,
-        })).filter((it) => it.sku !== '');
+        s.items = products.map((p) => {
+          const sku = p.product_id != null ? String(p.product_id) : (p.offer_id != null ? String(p.offer_id) : (p.sku != null ? String(p.sku) : ''));
+          return {
+            sku,
+            quantity: Number(p.quantity) || 1,
+            name: p.name,
+          };
+        }).filter((it) => it.sku !== '');
       } catch (e) {
         // не ломаем синк
       }
