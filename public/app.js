@@ -752,7 +752,7 @@ async function loadCostsSection() {
 document.getElementById('btn-refresh-costs')?.addEventListener('click', async () => {
   const btn = document.getElementById('btn-refresh-costs');
   if (btn) btn.disabled = true;
-  showToast('Обновление товаров и пересчёт остатков…');
+  showToast('Обновление товаров и заказов с Ozon…');
   try {
     const res = await fetch(API + '/products/sync', { method: 'POST' }).then((r) => r.json()).catch(() => ({}));
     if (!res.ok) {
@@ -760,10 +760,12 @@ document.getElementById('btn-refresh-costs')?.addEventListener('click', async ()
       if (btn) btn.disabled = false;
       return;
     }
-    showToast('Товары загружены. Пересчитываю остатки расходников…');
+    showToast('Товары загружены. Подтягиваю размещённые заказы…');
+    const postingsRes = await fetch(API + '/postings/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }).then((r) => r.json()).catch(() => ({}));
+    showToast(postingsRes.ok ? 'Заказы подтянуты. Пересчитываю остатки…' : 'Пересчитываю остатки…');
     const enrichRes = await fetch(API + '/sales/enrich-items', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).then((r) => r.json()).catch((e) => ({ ok: false, error: e.message }));
     await loadCostsSection();
-    showToast('Готово. Товаров: ' + (res.count ?? 0) + (enrichRes.ok ? '. Остатки пересчитаны.' : ''));
+    showToast('Готово. Товаров: ' + (res.count ?? 0) + (postingsRes.ok ? ', заказов: ' + (postingsRes.count ?? 0) : '') + '. Остатки пересчитаны.');
     if (!enrichRes.ok) showToast('Пересчёт остатков: ' + (enrichRes.error || 'ошибка'), 'error');
   } finally {
     if (btn) btn.disabled = false;
@@ -773,15 +775,13 @@ document.getElementById('btn-refresh-costs')?.addEventListener('click', async ()
 document.getElementById('btn-refresh-remainders')?.addEventListener('click', async () => {
   const btn = document.getElementById('btn-refresh-remainders');
   if (btn) btn.disabled = true;
-  showToast('Подтягиваю состав заказов из Ozon…');
+  showToast('Подтягиваю размещённые заказы и пересчитываю остатки…');
   try {
-    const res = await fetch(API + '/sales/enrich-items', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).then((r) => r.json()).catch((e) => ({ ok: false, error: e.message }));
-    if (res.ok) {
-      showToast('Готово. Обновлено заказов: ' + (res.enriched ?? 0) + '. Остатки пересчитаны.');
-      loadCostsSection();
-    } else {
-      showToast(res.error || 'Ошибка', 'error');
-    }
+    const postingsRes = await fetch(API + '/postings/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }).then((r) => r.json()).catch(() => ({}));
+    const enrichRes = await fetch(API + '/sales/enrich-items', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).then((r) => r.json()).catch((e) => ({ ok: false, error: e.message }));
+    await loadCostsSection();
+    if (postingsRes.ok || enrichRes.ok) showToast('Готово. Остатки пересчитаны по размещённым заказам.' + (postingsRes.ok ? ' Заказов: ' + (postingsRes.count ?? 0) : ''));
+    else showToast(enrichRes.error || postingsRes.error || 'Ошибка', 'error');
   } finally {
     if (btn) btn.disabled = false;
   }

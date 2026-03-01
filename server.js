@@ -76,8 +76,7 @@ app.get('/api/stocks', async (req, res) => {
     }));
   };
   try {
-    const data = await ozon.getStocks({});
-    const items = data.result?.items || [];
+    const items = await ozon.getAllStocks();
     res.json(items.length ? items : fallback());
   } catch (e) {
     console.error('api/stocks:', e.message);
@@ -387,6 +386,44 @@ app.get('/api/postings', async (req, res) => {
   }
 });
 
+/** Синк постингов с Ozon (список + состав товаров) — для расчёта остатков по размещённым заказам. */
+app.post('/api/postings/sync', async (req, res) => {
+  try {
+    const to = (req.body?.date_to || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
+    const from = (req.body?.date_from || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
+    const postings = await ozon.getPostingsList({ in_process_at_from: from, in_process_at_to: to });
+    const existingPostings = readJson('postings.json', []);
+    const byPostingNum = new Map(existingPostings.map((p) => [String(p.posting_number || p.id), p]));
+    for (const p of postings) {
+      const num = p.posting_number || p.id;
+      if (!num) continue;
+      const rec = { ...p, posting_number: num, date: (p.in_process_at || p.created_at || '').toString().slice(0, 10) };
+      try {
+        const detail = await ozon.getPostingByNumber(num);
+        if (detail) {
+          rec.potential_amount = Number(detail.sum) > 0 ? detail.sum : (byPostingNum.get(String(num))?.potential_amount ?? undefined);
+          const prods = detail.result?.products || detail.products || [];
+          if (Array.isArray(prods) && prods.length) rec.products = prods.map((x) => ({
+            offer_id: x.offer_id != null ? String(x.offer_id) : '',
+            product_id: x.product_id != null ? String(x.product_id) : '',
+            sku: x.sku != null ? String(x.sku) : (x.offer_id != null ? String(x.offer_id) : ''),
+            quantity: Number(x.quantity) || 1,
+          }));
+        }
+      } catch (e) { /* ignore */ }
+      const existing = byPostingNum.get(String(num));
+      if (existing?.products != null && (rec.products == null || !rec.products.length)) rec.products = existing.products;
+      if (existing?.potential_amount != null && rec.potential_amount == null) rec.potential_amount = existing.potential_amount;
+      byPostingNum.set(String(num), rec);
+    }
+    writeJson('postings.json', Array.from(byPostingNum.values()));
+    res.json({ ok: true, count: postings.length });
+  } catch (e) {
+    console.error('postings/sync error:', e.message);
+    res.status(200).json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/api/sales/sync', async (req, res) => {
   try {
     const { date_from, date_to } = req.body || {};
@@ -488,13 +525,21 @@ app.post('/api/sales/sync', async (req, res) => {
         if (!num) continue;
         const existing = byPostingNum.get(String(num));
         const rec = { ...p, posting_number: num, date: (p.in_process_at || p.created_at || '').toString().slice(0, 10) };
-        if (existing && existing.potential_amount != null) rec.potential_amount = existing.potential_amount;
-        else {
-          try {
-            const detail = await ozon.getPostingByNumber(num);
-            if (detail && Number(detail.sum) > 0) rec.potential_amount = detail.sum;
-          } catch (e) { /* ignore */ }
-        }
+        try {
+          const detail = await ozon.getPostingByNumber(num);
+          if (detail) {
+            if (Number(detail.sum) > 0) rec.potential_amount = detail.sum;
+            const prods = detail.result?.products || detail.products || [];
+            if (Array.isArray(prods) && prods.length) rec.products = prods.map((x) => ({
+              offer_id: x.offer_id != null ? String(x.offer_id) : '',
+              product_id: x.product_id != null ? String(x.product_id) : '',
+              sku: x.sku != null ? String(x.sku) : (x.offer_id != null ? String(x.offer_id) : ''),
+              quantity: Number(x.quantity) || 1,
+            }));
+          }
+        } catch (e) { /* ignore */ }
+        if (existing?.potential_amount != null && rec.potential_amount == null) rec.potential_amount = existing.potential_amount;
+        if (existing?.products != null && (rec.products == null || !rec.products.length)) rec.products = existing.products;
         byPostingNum.set(String(num), rec);
       }
       writeJson('postings.json', Array.from(byPostingNum.values()));
@@ -866,6 +911,7 @@ app.get('/api/costs/products', (req, res) => {
 
 app.get('/api/costs/consumables-remainder', (req, res) => {
   const sales = readJson('sales.json', []);
+  const postings = readJson('postings.json', []);
   const products = readJson('products_cache.json', []);
   const productTypes = readJson('product_types.json', {});
   const expensePerPreset = readJson('expense_per_preset.json', {});
@@ -875,21 +921,21 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
   const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
   const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
 
-  const salesWithItems = sales.filter((s) => Number(s.amount ?? 0) > 0 && Array.isArray(s.items) && s.items.length);
-
   const result = expenseItems.map((e) => {
     const earliestDate = expenseEarliestBatchDate(e);
-    const salesForConsumed = earliestDate
-      ? salesWithItems.filter((s) => toD(s.date || s.operation_date || s.created_at) >= earliestDate)
-      : salesWithItems;
     const soldCountByPreset = {};
-    salesForConsumed.forEach((s) => {
-      (s.items || []).forEach((it) => {
-        const sku = it.sku != null ? String(it.sku) : '';
-        const directOfferId = it.offer_id != null ? String(it.offer_id) : '';
-        const product = byProductId.get(sku) || byOfferId.get(sku) || (directOfferId ? byOfferId.get(directOfferId) : null);
-        const offerId = directOfferId || (product?.offer_id != null ? String(product.offer_id) : sku);
-        const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
+    const postingsToCount = Array.isArray(postings)
+      ? postings.filter((p) => {
+          const d = toD(p.date || p.in_process_at || p.created_at);
+          return d && (!earliestDate || d >= earliestDate) && Array.isArray(p.products) && p.products.length;
+        })
+      : [];
+    postingsToCount.forEach((p) => {
+      (p.products || []).forEach((it) => {
+        const offerId = (it.offer_id != null ? String(it.offer_id) : '') || (it.sku != null ? String(it.sku) : '');
+        const product = byOfferId.get(offerId) || byProductId.get(String(it.product_id || it.sku || ''));
+        const resolvedOffer = offerId || (product?.offer_id != null ? String(product.offer_id) : '');
+        const presetId = productTypes[resolvedOffer] ?? productTypes[offerId] ?? productTypes[it.sku] ?? '';
         if (!presetId) return;
         soldCountByPreset[presetId] = (soldCountByPreset[presetId] || 0) + (Number(it.quantity) || 1);
       });
