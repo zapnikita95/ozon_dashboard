@@ -957,13 +957,17 @@ async function loadWarehouseSection() {
       oilsTbody.innerHTML = (oils || []).map((o) => {
         const r = remainderById.get(o.id);
         const rem = r ? r.remaining : (o.volume_ml != null ? o.volume_ml : '—');
-        const units = r && r.units_can_make != null ? r.units_can_make : '—';
+        const unitsByDemand = r && r.units_by_demand != null ? r.units_by_demand : null;
+        const unitsMin = r && r.units_can_make != null ? r.units_can_make : null;
+        const units = unitsByDemand != null ? unitsByDemand : unitsMin;
+        const daysLeft = r && r.days_left != null ? r.days_left : null;
+        const unitsStr = units != null ? String(units) + (daysLeft != null ? ' · ~' + daysLeft + ' дн.' : '') : '—';
         return `
         <tr>
           <td>${o.name || '—'}</td>
           <td>${o.volume_ml != null ? o.volume_ml : '—'}</td>
           <td>${rem}</td>
-          <td>${units}</td>
+          <td>${unitsStr}</td>
           <td class="td-actions">
             <button type="button" class="btn btn-small btn-secondary" data-oil-batch="${o.id}" data-oil-name="${(o.name || '').replace(/"/g, '&quot;')}">+ Завоз</button>
             <button type="button" class="btn btn-small btn-secondary" data-oil-delete="${o.id}">Удалить</button>
@@ -1078,14 +1082,17 @@ async function loadWarehouseSection() {
     const canvas = document.getElementById('warehouse-oils-chart');
     if (canvas && (remainder || []).length > 0) {
       const labels = remainder.map((r) => r.name || r.id);
-      const values = remainder.map((r) => r.units_can_make != null ? r.units_can_make : 0);
+      const values = remainder.map((r) => {
+        const v = r.units_by_demand != null ? r.units_by_demand : r.units_can_make;
+        return v != null ? v : 0;
+      });
       const colors = values.map((v) => (v >= 20 ? 'rgba(22, 163, 74, 0.8)' : 'rgba(59, 130, 246, 0.6)'));
       if (warehouseOilsChartInstance) warehouseOilsChartInstance.destroy();
       warehouseOilsChartInstance = new Chart(canvas, {
         type: 'bar',
         data: {
           labels,
-          datasets: [{ label: 'Хватит на (шт)', data: values, backgroundColor: colors }],
+          datasets: [{ label: 'Хватит на (шт, по спросу)', data: values, backgroundColor: colors }],
         },
         options: {
           indexAxis: 'y',
@@ -1094,7 +1101,19 @@ async function loadWarehouseSection() {
           scales: {
             x: { beginAtZero: true, title: { display: true, text: 'шт' } },
           },
-          plugins: { legend: { display: false } },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                afterBody: (items) => {
+                  const i = items[0]?.dataIndex;
+                  if (i == null || !remainder[i]) return '';
+                  const d = remainder[i].days_left;
+                  return d != null ? 'При текущем темпе: ~' + d + ' дн.' : '';
+                },
+              },
+            },
+          },
         },
       });
     } else if (canvas && warehouseOilsChartInstance) {

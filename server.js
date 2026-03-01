@@ -1288,15 +1288,45 @@ app.post('/api/warehouse/oil-consumption', (req, res) => {
   res.json(data);
 });
 
-/** Остатки масел: объём в наличии минус расход на размещённые заказы; «хватит на N шт» — минимум по артикулам, использующим это масло. */
+/** Остатки масел: объём в наличии минус расход на размещённые заказы.
+ * units_can_make — минимум по артикулам (узкий артикул).
+ * units_by_demand — при текущем спросе: по продажам за последние 30 дней считаем объём и кол-во по артикулам, использующим это масло; хватит на N шт при том же соотношении заказов.
+ * days_left — при текущем темпе расхода (мл/день за 30 дней) на сколько дней хватит остатка. */
 app.get('/api/warehouse/oils-remainder', (req, res) => {
   const oils = readEssentialOils();
   const consumption = readOilConsumption();
   const postings = readJson('postings.json', []);
+  const sales = readJson('sales.json', []);
+  const overrides = readJson('payout_overrides.json', {});
   const products = readJson('products_cache.json', []);
   const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
   const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
   const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+
+  const DEMAND_DAYS = 30;
+  const periodEnd = new Date();
+  const periodStart = new Date(periodEnd.getTime() - DEMAND_DAYS * 24 * 60 * 60 * 1000);
+  const fromStr = toD(periodStart.toISOString());
+  const toStr = toD(periodEnd.toISOString());
+
+  const demandUnitsByOffer = {};
+  (sales || []).forEach((s) => {
+    const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
+    if (amt <= 0) return;
+    const typeName = (s.operation_type_name || s.type || '').trim();
+    if (/возврат|return/i.test(typeName)) return;
+    const d = toD(s.date || s.operation_date || s.created_at);
+    if (!d || d < fromStr || d > toStr) return;
+    (s.items || []).forEach((it) => {
+      const offerId = (it.offer_id != null ? String(it.offer_id) : '') || (it.sku != null ? String(it.sku) : '');
+      const product = byOfferId.get(offerId) || byProductId.get(String(it.product_id || it.sku || ''));
+      const resolved = offerId || (product?.offer_id != null ? String(product.offer_id) : '');
+      const key = resolved || offerId;
+      if (!key) return;
+      const qty = Number(it.quantity) || 1;
+      demandUnitsByOffer[key] = (demandUnitsByOffer[key] || 0) + qty;
+    });
+  });
 
   const usedByOil = {};
   oils.forEach((o) => { usedByOil[o.id] = 0; });
@@ -1328,6 +1358,24 @@ app.get('/api/warehouse/oils-remainder', (req, res) => {
       const u = Math.floor(remaining / ml);
       if (unitsCanMake == null || u < unitsCanMake) unitsCanMake = u;
     });
+
+    let unitsByDemand = null;
+    let daysLeft = null;
+    let totalMlDemand = 0;
+    let totalUnitsDemand = 0;
+    Object.keys(consumption).forEach((offerId) => {
+      const mlPerUnit = Number(consumption[offerId][o.id]) || 0;
+      if (mlPerUnit <= 0) return;
+      const units = demandUnitsByOffer[offerId] || 0;
+      totalMlDemand += units * mlPerUnit;
+      totalUnitsDemand += units;
+    });
+    if (totalMlDemand > 0 && totalUnitsDemand > 0) {
+      unitsByDemand = Math.floor(remaining * (totalUnitsDemand / totalMlDemand));
+      const mlPerDay = totalMlDemand / DEMAND_DAYS;
+      if (mlPerDay > 0) daysLeft = Math.floor(remaining / mlPerDay);
+    }
+
     return {
       id: o.id,
       name: o.name,
@@ -1335,6 +1383,8 @@ app.get('/api/warehouse/oils-remainder', (req, res) => {
       used,
       remaining,
       units_can_make: unitsCanMake,
+      units_by_demand: unitsByDemand,
+      days_left: daysLeft,
     };
   });
   res.json(result);
