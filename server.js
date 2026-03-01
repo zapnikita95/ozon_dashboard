@@ -293,16 +293,24 @@ app.get('/api/sales/chart-data', async (req, res) => {
   const sales = readJson('sales.json', []);
   const overrides = readJson('payout_overrides.json', {});
   let postings = readJson('postings.json', []);
-  if (!Array.isArray(postings) || postings.length === 0) {
-    try {
-      const toIso = (dateTo || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
-      const fromIso = (dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
-      postings = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
-    } catch (e) {
-      console.error('chart-data: fetch postings from Ozon:', e.message);
+  const cached = Array.isArray(postings) ? postings : [];
+  try {
+    const toIso = (dateTo || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
+    const fromIso = (dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
+    const fromOzon = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
+    if (Array.isArray(fromOzon) && fromOzon.length > 0) {
+      const byNum = new Map(cached.map((p) => [String(p.posting_number || p.id), p]));
+      postings = fromOzon.map((p) => {
+        const num = p.posting_number || p.id;
+        const rec = byNum.get(String(num));
+        return rec ? { ...p, ...rec, potential_amount: p.potential_amount ?? rec.potential_amount ?? rec.sum } : p;
+      });
     }
-    if (!Array.isArray(postings)) postings = [];
+  } catch (e) {
+    console.error('chart-data: fetch postings from Ozon:', e.message);
+    if (!Array.isArray(postings) || postings.length === 0) postings = cached;
   }
+  if (!Array.isArray(postings)) postings = [];
   const productTypes = readJson('product_types.json', {});
   const expensePerPreset = readJson('expense_per_preset.json', {});
   let expenseItems = readJson('expense_items.json', []);
@@ -1042,18 +1050,26 @@ app.get('/api/sales/grouped', (req, res) => {
 app.get('/api/sales/sold-goods', async (req, res) => {
   const sales = readJson('sales.json', []);
   let postings = readJson('postings.json', []);
+  const cached = Array.isArray(postings) ? postings : [];
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
-  if (!Array.isArray(postings) || postings.length === 0) {
-    try {
-      const toIso = (dateTo || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
-      const fromIso = (dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
-      postings = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
-    } catch (e) {
-      console.error('sold-goods: fetch postings from Ozon:', e.message);
+  try {
+    const toIso = (dateTo || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
+    const fromIso = (dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
+    const fromOzon = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
+    if (Array.isArray(fromOzon) && fromOzon.length > 0) {
+      const byNum = new Map(cached.map((p) => [String(p.posting_number || p.id), p]));
+      postings = fromOzon.map((p) => {
+        const num = p.posting_number || p.id;
+        const rec = byNum.get(String(num));
+        return rec ? { ...p, ...rec, potential_amount: p.potential_amount ?? rec.potential_amount ?? rec.sum } : p;
+      });
     }
-    if (!Array.isArray(postings)) postings = [];
+  } catch (e) {
+    console.error('sold-goods: fetch postings from Ozon:', e.message);
+    if (!Array.isArray(postings) || postings.length === 0) postings = cached;
   }
+  if (!Array.isArray(postings)) postings = [];
   const deliveredFilter = (req.query.delivered || 'all').toLowerCase();
   const result = getSoldGoodsRows(sales, postings, dateFrom, dateTo);
   let out = result;
