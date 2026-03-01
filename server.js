@@ -445,7 +445,13 @@ app.get('/api/orders-in-delivery', (req, res) => {
     });
 
     const excludeStatus = (status, substatus, cancellation) => {
-      if (cancellation != null && typeof cancellation === 'object') return true;
+      // cancellation — объект с пустыми полями означает "отмены нет", проверяем реальную причину
+      if (cancellation != null && typeof cancellation === 'object') {
+        const realCancel = cancellation.cancel_reason_id > 0
+          || (cancellation.cancellation_type && String(cancellation.cancellation_type).trim() !== '')
+          || (cancellation.cancellation_initiator && String(cancellation.cancellation_initiator).trim() !== '');
+        if (realCancel) return true;
+      }
       const s = (status || '').toLowerCase();
       const sub = (substatus || '').toLowerCase();
       return /cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) ||
@@ -887,7 +893,12 @@ function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
 
   const toDp = (v) => (v != null ? String(v).slice(0, 10) : '');
   const isReturnOrCancel = (p) => {
-    if (p.cancellation != null && typeof p.cancellation === 'object') return true;
+    if (p.cancellation != null && typeof p.cancellation === 'object') {
+      const realCancel = p.cancellation.cancel_reason_id > 0
+        || (p.cancellation.cancellation_type && String(p.cancellation.cancellation_type).trim() !== '')
+        || (p.cancellation.cancellation_initiator && String(p.cancellation.cancellation_initiator).trim() !== '');
+      if (realCancel) return true;
+    }
     const s = String(p.status || '').toLowerCase();
     const sub = String(p.substatus || '').toLowerCase();
     if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
@@ -1670,14 +1681,17 @@ app.post('/api/description', async (req, res) => {
   }
 });
 
+// Кулдаун синка — в памяти процесса, сбрасывается при каждом рестарте/деплое
+let _lastStartupSyncTime = 0;
+
 async function startupSync() {
   if (!process.env.OZON_CLIENT_ID || !process.env.OZON_API_KEY) return;
-  const meta = readJson('sync_meta.json', {});
-  const lastSync = meta.postings_synced_at ? new Date(meta.postings_synced_at).getTime() : 0;
-  if (Date.now() - lastSync < 30 * 60 * 1000) {
-    console.log('[startup] postings recently synced, skipping.');
+  // Защита от двойного запуска в рамках одного процесса (не файловый — всегда запускается при старте)
+  if (Date.now() - _lastStartupSyncTime < 10 * 60 * 1000) {
+    console.log('[startup] postings sync already running/ran in this process, skipping.');
     return;
   }
+  _lastStartupSyncTime = Date.now();
   console.log('[startup] Syncing postings from Ozon...');
   try {
     const now = new Date();
@@ -1735,7 +1749,9 @@ async function startupSync() {
     }
 
     writeJson('postings.json', Array.from(byNum.values()));
-    writeJson('sync_meta.json', { ...meta, postings_synced_at: new Date().toISOString() });
+    _lastStartupSyncTime = Date.now();
+    const syncMeta = readJson('sync_meta.json', {});
+    writeJson('sync_meta.json', { ...syncMeta, postings_synced_at: new Date().toISOString() });
     console.log(`[startup] Synced ${byNum.size} postings (delivering: ${Array.from(byNum.values()).filter(p => p.status === 'delivering').length}).`);
   } catch (e) {
     console.error('[startup] Sync failed:', e.message);
