@@ -67,13 +67,21 @@ app.post('/api/products/sync', async (req, res) => {
 // ——— Stocks ———
 app.get('/api/stocks', async (req, res) => {
   res.set('Cache-Control', 'no-store');
+  const fallback = () => {
+    const cached = readJson('products_cache.json', []);
+    return (Array.isArray(cached) ? cached : []).map((p) => ({
+      product_id: p.product_id,
+      offer_id: p.offer_id,
+      stocks: [],
+    }));
+  };
   try {
     const data = await ozon.getStocks({});
     const items = data.result?.items || [];
-    res.json(Array.isArray(items) ? items : []);
+    res.json(items.length ? items : fallback());
   } catch (e) {
     console.error('api/stocks:', e.message);
-    res.status(200).json([]);
+    res.json(fallback());
   }
 });
 
@@ -125,7 +133,10 @@ app.post('/api/stocks/plus10', async (req, res) => {
     items.forEach((i) => {
       const match = !productIds.length && !offerIds.length || (i.product_id && idSet.has(String(i.product_id))) || (i.offer_id && offerSet.has(String(i.offer_id)));
       if (!match) return;
-      const current = (i.stock ?? 0) + (i.reserved ?? 0);
+      const stockArr = Array.isArray(i.stocks) ? i.stocks : [];
+      const current = stockArr.length
+        ? stockArr.reduce((acc, st) => acc + (Number(st.present) || 0), 0)
+        : Number(i.stock ?? 0);
       stocks.push({
         offer_id: i.offer_id,
         product_id: i.product_id,
