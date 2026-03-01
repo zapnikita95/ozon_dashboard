@@ -11,9 +11,9 @@ async function main() {
   console.log('OZON_CLIENT_ID:', process.env.OZON_CLIENT_ID ? '***' : '(нет)');
   const toIso = new Date().toISOString().slice(0, 19) + 'Z';
   const fromIso = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
-  console.log('Запрос getPostingsList:', fromIso, '…', toIso);
+  console.log('Запрос getPostingsListRange:', fromIso, '…', toIso);
   try {
-    const postings = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
+    const postings = await ozon.getPostingsListRange(fromIso, toIso);
     console.log('Постингов получено:', Array.isArray(postings) ? postings.length : 0);
     if (Array.isArray(postings) && postings.length > 0) {
       const sample = postings[0];

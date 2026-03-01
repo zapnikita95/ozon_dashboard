@@ -610,13 +610,15 @@ async function updateOrdersInDelivery() {
   try {
     const res = await fetch(API + '/orders-in-delivery?_=' + Date.now());
     const r = res.ok ? (await res.json().catch(() => ({}))) : {};
-    const n = r.count != null ? Number(r.count) : null;
-    const amount = r.total_amount != null ? Number(r.total_amount) : null;
-    const countStr = n == null || Number.isNaN(n) ? '—' : String(n);
-    const amountStr = amount != null && !Number.isNaN(amount) ? ' · на сумму ' + formatMoney(amount) : '';
+    const n = r.count != null ? Number(r.count) : 0;
+    const amount = r.total_amount != null ? Number(r.total_amount) : 0;
+    const countStr = Number.isNaN(n) ? '0' : String(n);
+    const amountStr = Number.isNaN(amount) ? '' : ' · на сумму ' + formatMoney(amount);
     el.innerHTML = 'Заказов в доставке: <strong>' + countStr + '</strong>' + amountStr;
+    if (r.error) showToast('Заказы в доставке: данные из кэша. Ozon: ' + r.error, 'warning');
   } catch (e) {
-    el.innerHTML = 'Заказов в доставке: <strong>—</strong>';
+    el.innerHTML = 'Заказов в доставке: <strong>0</strong>';
+    showToast('Не удалось загрузить заказы в доставке. Проверьте OZON_CLIENT_ID и OZON_API_KEY в .env', 'error');
   }
 }
 
