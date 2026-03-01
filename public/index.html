@@ -92,19 +92,70 @@
       </div>
       <div class="table-block">
         <h3>Продажи <span class="tooltip-trigger" title="Сумма, которую Озон реально перевёл на счёт по этой продаже; при необходимости укажите вручную">?</span></h3>
-        <div class="table-wrap">
-          <table class="data-table" id="sales-table">
+        <div class="sales-view-toggle">
+          <button type="button" class="btn btn-small toggle-view active" data-view="operations">По операциям</button>
+          <button type="button" class="btn btn-small toggle-view" data-view="orders">По заказам</button>
+        </div>
+        <div id="sales-view-operations" class="sales-view-pane">
+          <div class="table-wrap">
+            <table class="data-table" id="sales-table">
             <thead>
               <tr>
                 <th data-sort="date">Дата</th>
-                <th>Тип операции</th>
-                <th>Заказ / Штрихкод</th>
+                <th data-sort="type">Тип операции</th>
+                <th data-sort="posting">Заказ / Штрихкод</th>
                 <th data-sort="amount">Сумма (₽)</th>
-                <th>Ваша цена</th>
+                <th data-sort="price">Ваша цена</th>
                 <th data-sort="actual">Фактически получено (₽)</th>
               </tr>
             </thead>
             <tbody id="sales-tbody"></tbody>
+          </table>
+        </div>
+        </div>
+        <div id="sales-view-orders" class="sales-view-pane" hidden>
+          <h4>По заказам (доход и расходы Ozon по каждому заказу)</h4>
+          <div class="table-wrap">
+            <table class="data-table" id="orders-table">
+              <thead>
+                <tr>
+                  <th data-sort="date">Дата</th>
+                  <th data-sort="posting">Заказ</th>
+                  <th data-sort="income">Получено (₽)</th>
+                  <th data-sort="ozon">Расходы Ozon по заказу (₽)</th>
+                </tr>
+              </thead>
+              <tbody id="orders-tbody"></tbody>
+            </table>
+          </div>
+          <h4>Реклама по кодам</h4>
+          <div class="table-wrap">
+            <table class="data-table" id="ad-codes-table">
+              <thead>
+                <tr>
+                  <th data-sort="code">Код</th>
+                  <th data-sort="total">Сумма расхода (₽)</th>
+                </tr>
+              </thead>
+              <tbody id="ad-codes-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Проданные товары <span class="tooltip-trigger" title="Список товаров из операций с положительной суммой">?</span></h3>
+        <div class="table-wrap">
+          <table class="data-table" id="sold-goods-table">
+            <thead>
+              <tr>
+                <th data-sort="date">Дата</th>
+                <th data-sort="posting">Заказ</th>
+                <th data-sort="name">Товар</th>
+                <th data-sort="sku">SKU</th>
+                <th data-sort="qty">Кол-во</th>
+              </tr>
+            </thead>
+            <tbody id="sold-goods-tbody"></tbody>
           </table>
         </div>
       </div>

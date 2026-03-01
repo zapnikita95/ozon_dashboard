@@ -86,10 +86,13 @@ async function loadSales() {
   if (date_from) q.set('date_from', date_from);
   if (date_to) q.set('date_to', date_to);
   const list = await fetch(API + '/sales?' + q).then((r) => r.json()).catch(() => []);
+  // Сверху самые свежие: сортируем по дате по убыванию
+  const toD = (s) => (s.date || s.operation_date || s.created_at || '').slice(0, 10);
+  list.sort((a, b) => (toD(b) || '').localeCompare(toD(a) || '', 'ru'));
   const tbody = document.getElementById('sales-tbody');
   tbody.innerHTML = list.map((s) => `
     <tr>
-      <td>${(s.date || s.operation_date || s.created_at || '').slice(0, 10)}</td>
+      <td>${toD(s)}</td>
       <td>${s.operation_type_name || s.type || '—'}</td>
       <td>${s.posting?.posting_number || s.posting?.number || s.operation_id || '—'}</td>
       <td>${formatMoney(s.amount)}</td>
@@ -105,7 +108,11 @@ async function loadSales() {
     });
   });
   bindTableSort('sales-table');
+  const dateTh = document.querySelector('#sales-table thead th[data-sort="date"]');
+  if (dateTh) dateTh.classList.add('sort-desc');
   buildChart(list);
+  loadSalesGroupedView();
+  loadSoldGoods();
   return list;
 }
 
@@ -131,6 +138,67 @@ function bindTableSort(tableId) {
       rows.forEach((r) => tbody.appendChild(r));
     });
   });
+}
+
+document.querySelectorAll('.toggle-view[data-view]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.toggle-view').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const view = btn.dataset.view;
+    document.getElementById('sales-view-operations').hidden = view !== 'operations';
+    document.getElementById('sales-view-orders').hidden = view !== 'orders';
+  });
+});
+
+async function loadSalesGroupedView() {
+  const { date_from, date_to } = getPeriod();
+  const q = new URLSearchParams();
+  if (date_from) q.set('date_from', date_from);
+  if (date_to) q.set('date_to', date_to);
+  const r = await fetch(API + '/sales/grouped?' + q).then((x) => x.json()).catch(() => ({ orders: [], ad_codes: [], summary: {} }));
+  const ordersTbody = document.getElementById('orders-tbody');
+  const adTbody = document.getElementById('ad-codes-tbody');
+  if (ordersTbody) {
+    ordersTbody.innerHTML = (r.orders || []).map((o) => `
+      <tr>
+        <td>${o.date || '—'}</td>
+        <td>${o.posting_number || '—'}</td>
+        <td>${formatMoney(o.income)}</td>
+        <td>${formatMoney(o.ozon_expenses)}</td>
+      </tr>
+    `).join('');
+    const dateThOrder = document.querySelector('#orders-table thead th[data-sort="date"]');
+    if (dateThOrder) { dateThOrder.classList.add('sort-desc'); document.querySelectorAll('#orders-table thead th[data-sort]').forEach((h) => { if (h !== dateThOrder) h.classList.remove('sort-desc'); }); }
+  }
+  if (adTbody) {
+    adTbody.innerHTML = (r.ad_codes || []).map((a) => `
+      <tr>
+        <td>${a.code || '—'}</td>
+        <td>${formatMoney(a.total)}</td>
+      </tr>
+    `).join('');
+  }
+}
+
+async function loadSoldGoods() {
+  const { date_from, date_to } = getPeriod();
+  const q = new URLSearchParams();
+  if (date_from) q.set('date_from', date_from);
+  if (date_to) q.set('date_to', date_to);
+  const list = await fetch(API + '/sales/sold-goods?' + q).then((r) => r.json()).catch(() => []);
+  const tbody = document.getElementById('sold-goods-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = list.map((row) => `
+    <tr>
+      <td>${row.date || '—'}</td>
+      <td>${row.posting_number || '—'}</td>
+      <td>${row.product_name || '—'}</td>
+      <td>${row.sku ?? '—'}</td>
+      <td>${row.quantity ?? 1}</td>
+    </tr>
+  `).join('');
+  const dateThSold = document.querySelector('#sold-goods-table thead th[data-sort="date"]');
+  if (dateThSold) { dateThSold.classList.add('sort-desc'); document.querySelectorAll('#sold-goods-table thead th[data-sort]').forEach((h) => { if (h !== dateThSold) h.classList.remove('sort-desc'); }); }
 }
 
 function buildChart(sales) {
@@ -494,3 +562,6 @@ function formatMoney(v) {
 // Init
 setPeriodDates();
 loadSalesSection();
+bindTableSort('orders-table');
+bindTableSort('ad-codes-table');
+bindTableSort('sold-goods-table');

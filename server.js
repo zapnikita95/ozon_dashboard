@@ -268,6 +268,123 @@ app.get('/api/sales/export', (req, res) => {
   res.send(buf);
 });
 
+/** Заказ = posting_number содержит дефис (например 17042858-0485-1). Реклама = без дефиса (22660431). */
+function isOrderPosting(postingNumber) {
+  return typeof postingNumber === 'string' && postingNumber.includes('-');
+}
+
+/** Группировка по Заказ/Штрихкод: заказы (доход + расходы по заказу) и реклама по коду. */
+app.get('/api/sales/grouped', (req, res) => {
+  const sales = readJson('sales.json', []);
+  const overrides = readJson('payout_overrides.json', {});
+  const dateFrom = req.query.date_from || '';
+  const dateTo = req.query.date_to || '';
+  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+  let list = sales.map((s) => ({
+    ...s,
+    actual_payout_rub: overrides[s.transaction_id ?? s.id] != null ? overrides[s.transaction_id ?? s.id] : s.amount,
+  }));
+  if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
+  if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
+
+  const byPosting = new Map();
+  list.forEach((s) => {
+    const code = s.posting?.posting_number || s.posting?.number || s.operation_id || '';
+    if (!code) return;
+    const d = toD(s.date || s.operation_date || s.created_at);
+    const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
+    if (!byPosting.has(code)) {
+      byPosting.set(code, { posting_number: code, date: d, income: 0, ozon_expenses: 0, items: [], operations: [] });
+    }
+    const g = byPosting.get(code);
+    if (amt > 0) g.income += amt;
+    else g.ozon_expenses += Math.abs(amt);
+    if (d > (g.date || '')) g.date = d;
+    if (Array.isArray(s.items) && s.items.length) {
+      s.items.forEach((it) => {
+        if (it.name || it.sku) g.items.push({ name: it.name || '', sku: it.sku });
+      });
+    }
+    g.operations.push({ type: s.operation_type_name || s.type, amount: amt });
+  });
+
+  const orders = [];
+  const adCodes = [];
+  byPosting.forEach((g, code) => {
+    if (isOrderPosting(code)) {
+      orders.push(g);
+    } else {
+      adCodes.push({ code, total: g.ozon_expenses });
+    }
+  });
+  orders.sort((a, b) => (b.date || '').localeCompare(a.date || '', 'ru'));
+
+  const total_sold = orders.reduce((sum, o) => sum + o.income, 0);
+  const ozon_expenses_total = list.filter((s) => Number(s.amount ?? 0) < 0).reduce((sum, s) => sum + Math.abs(Number(s.amount ?? 0)), 0);
+  const expenseItems = readJson('expense_items.json', []);
+  const expensePerPreset = readJson('expense_per_preset.json', {});
+  const productTypes = readJson('product_types.json', {});
+  const products = readJson('products_cache.json', []);
+  const byProductId = new Map((products || []).map((p) => [String(p.product_id), p]));
+  const presets = readJson('product_type_presets.json', []);
+  if (!presets?.length) presets.push({ id: 'diffuser_50', name: 'Диффузор 50 мл' }, { id: 'diffuser_100', name: 'Диффузор 100 мл' }, { id: 'sachet', name: 'Саше' });
+  function costPerUnit(presetId) {
+    if (!presetId) return 0;
+    const cons = expensePerPreset[presetId] || {};
+    let sum = 0;
+    (expenseItems || []).forEach((e) => {
+      const q = Number(cons[e.id]) || 0;
+      const total = Number(e.cost) || 0;
+      const units = Number(e.quantity) || 1;
+      sum += q * (total / units);
+    });
+    return sum;
+  }
+  let consumables = 0;
+  orders.forEach((o) => {
+    (o.items || []).forEach((it) => {
+      const sku = it.sku != null ? String(it.sku) : '';
+      const product = byProductId.get(sku);
+      const offerId = product?.offer_id != null ? String(product.offer_id) : '';
+      const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
+      consumables += costPerUnit(presetId);
+    });
+  });
+
+  res.json({
+    orders,
+    ad_codes: adCodes,
+    summary: { total_sold, ozon_expenses_total, consumables },
+  });
+});
+
+/** Список проданных товаров: дата, заказ, товар, sku, количество. */
+app.get('/api/sales/sold-goods', (req, res) => {
+  const sales = readJson('sales.json', []);
+  const dateFrom = req.query.date_from || '';
+  const dateTo = req.query.date_to || '';
+  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+  let list = sales.filter((s) => Number(s.amount ?? 0) > 0 && Array.isArray(s.items) && s.items.length);
+  if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
+  if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
+  const result = [];
+  list.forEach((s) => {
+    const date = toD(s.date || s.operation_date || s.created_at);
+    const posting_number = s.posting?.posting_number || s.posting?.number || '';
+    (s.items || []).forEach((it) => {
+      result.push({
+        date,
+        posting_number,
+        product_name: it.name || '',
+        sku: it.sku,
+        quantity: 1,
+      });
+    });
+  });
+  result.sort((a, b) => (b.date || '').localeCompare(a.date || '', 'ru'));
+  res.json(result);
+});
+
 // ——— Expense items & product types ———
 app.get('/api/expense-items', (req, res) => {
   res.json(readJson('expense_items.json', []));
@@ -460,6 +577,7 @@ app.get('/api/finance-summary', (req, res) => {
   const toDateStr = (v) => (v != null ? String(v).slice(0, 10) : '');
 
   let received = 0;
+  let ozon_expenses = 0;
   const list = sales.filter((s) => {
     const d = toDateStr(s.date || s.operation_date || s.created_at);
     return d >= dateFrom && d <= dateTo;
@@ -467,18 +585,59 @@ app.get('/api/finance-summary', (req, res) => {
   list.forEach((s) => {
     const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
     if (amt > 0) received += amt;
+    else ozon_expenses += Math.abs(amt);
+  });
+
+  const expenseItems = readJson('expense_items.json', []);
+  const expensePerPreset = readJson('expense_per_preset.json', {});
+  const productTypes = readJson('product_types.json', {});
+  const products = readJson('products_cache.json', []);
+  const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
+  let presets = readJson('product_type_presets.json', []);
+  if (!presets?.length) presets = [{ id: 'diffuser_50', name: 'Диффузор 50 мл' }, { id: 'diffuser_100', name: 'Диффузор 100 мл' }, { id: 'sachet', name: 'Саше' }];
+  function costPerUnit(presetId) {
+    if (!presetId) return 0;
+    const cons = expensePerPreset[presetId] || {};
+    let sum = 0;
+    (expenseItems || []).forEach((e) => {
+      const q = Number(cons[e.id]) || 0;
+      const total = Number(e.cost) || 0;
+      const units = Number(e.quantity) || 1;
+      sum += q * (total / units);
+    });
+    return sum;
+  }
+  let consumables = 0;
+  const byPosting = new Map();
+  list.forEach((s) => {
+    const code = s.posting?.posting_number || s.posting?.number || '';
+    if (!code || !code.includes('-')) return;
+    if (!byPosting.has(code)) byPosting.set(code, []);
+    byPosting.get(code).push(s);
+  });
+  byPosting.forEach((ops) => {
+    const items = ops.flatMap((s) => s.items || []);
+    items.forEach((it) => {
+      const sku = it.sku != null ? String(it.sku) : '';
+      const product = byProductId.get(sku);
+      const offerId = product?.offer_id != null ? String(product.offer_id) : '';
+      const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
+      consumables += costPerUnit(presetId);
+    });
   });
 
   const weeks = Math.max(1, (new Date(dateTo) - new Date(dateFrom)) / (7 * 24 * 60 * 60 * 1000));
   const adTotal = (Number(adSpend.weekly_budget) || 0) * weeks + (Array.isArray(adSpend.one_time) ? adSpend.one_time.reduce((a, x) => a + (Number(x.amount) || 0), 0) : 0);
   const taxes = Number(benchmarks.taxes) || 0;
-  const totalExpenses = adTotal + taxes;
-  const netProfit = received - adTotal - taxes;
+  const totalExpenses = adTotal + taxes + ozon_expenses + consumables;
+  const netProfit = received - totalExpenses;
 
   res.json({
     date_from: dateFrom,
     date_to: dateTo,
     received,
+    ozon_expenses,
+    consumables,
     net_profit: netProfit,
     expenses: totalExpenses,
     ad_spend: adTotal,

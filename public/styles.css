@@ -193,6 +193,12 @@ body {
 
 .table-block .btn-small { margin-bottom: 12px; }
 
+.sales-view-toggle { margin-bottom: 12px; }
+.sales-view-toggle .toggle-view { margin-right: 8px; }
+.sales-view-toggle .toggle-view.active { background: var(--accent); color: #fff; }
+.sales-view-pane h4 { margin: 1em 0 0.5em; font-size: 1rem; }
+.sales-view-pane h4:first-child { margin-top: 0; }
+
 .modal {
   position: fixed;
   inset: 0;
