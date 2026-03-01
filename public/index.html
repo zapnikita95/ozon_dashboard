@@ -19,6 +19,7 @@
     <nav class="nav">
       <button type="button" class="nav-item active" data-section="sales">Продажи и доходы</button>
       <button type="button" class="nav-item" data-section="costs">Себестоимость</button>
+      <button type="button" class="nav-item" data-section="warehouse">Склад</button>
       <button type="button" class="nav-item" data-section="products">Товары</button>
     </nav>
   </aside>
@@ -257,6 +258,65 @@
       </div>
     </section>
 
+    <!-- Склад -->
+    <section id="section-warehouse" class="section">
+      <div class="table-block">
+        <h3>Эфирные масла</h3>
+        <p class="hint">Объём в наличии — сколько мл каждого масла на складе. Остаток считается по проданным/размещённым заказам и расходу по артикулам.</p>
+        <button type="button" class="btn btn-primary btn-small" id="btn-add-oil">Добавить эфирное масло</button>
+        <div class="table-wrap">
+          <table class="data-table" id="warehouse-oils-table">
+            <thead>
+              <tr>
+                <th>Название</th>
+                <th>Объём в наличии (мл)</th>
+                <th>Остаток (мл)</th>
+                <th>Хватит на (шт)</th>
+                <th class="th-center" style="width:100px"></th>
+              </tr>
+            </thead>
+            <tbody id="warehouse-oils-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Расход масла по артикулу (мл на 1 шт)</h3>
+        <p class="hint">Для каждого артикула укажите, сколько мл каждого эфирного масла нужно на изготовление одной единицы.</p>
+        <div class="table-wrap" id="warehouse-oil-consumption-wrap">
+          <table class="data-table" id="warehouse-oil-consumption-table">
+            <thead><tr id="warehouse-oil-consumption-thead"></tr></thead>
+            <tbody id="warehouse-oil-consumption-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Остатки масел (на сколько единиц хватит)</h3>
+        <p class="hint">Горизонтальная шкала: по каждому маслу — на сколько шт самого «узкого» артикула хватит остатка. Оранжевым — запас ≥ 20 шт.</p>
+        <div class="chart-wrap chart-wrap-horizontal-bars" id="warehouse-oils-chart-wrap">
+          <canvas id="warehouse-oils-chart"></canvas>
+        </div>
+      </div>
+      <div class="table-block">
+        <h3>Типы товаров (пресеты)</h3>
+        <button type="button" class="btn btn-primary btn-small" id="btn-add-preset-warehouse">Добавить тип товара</button>
+        <ul id="warehouse-preset-list" class="preset-list"></ul>
+      </div>
+      <div class="table-block">
+        <h3>Привязка товаров к типу</h3>
+        <div class="table-wrap">
+          <table class="data-table" id="warehouse-product-types-table">
+            <thead>
+              <tr>
+                <th>Товар</th>
+                <th>Тип (пресет)</th>
+              </tr>
+            </thead>
+            <tbody id="warehouse-product-types-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- Товары -->
     <section id="section-products" class="section">
       <div class="products-toolbar">
@@ -384,6 +444,20 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <div id="modal-oil" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Добавить эфирное масло</h3>
+      <form id="form-oil">
+        <label>Название <input type="text" name="name" placeholder="Например: Лаванда" required></label>
+        <label>Объём в наличии (мл) <input type="number" name="volume_ml" min="0" step="0.1" required></label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
+          <button type="submit" class="btn btn-primary">Добавить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js?v=2"></script>
 </body>
 </html>

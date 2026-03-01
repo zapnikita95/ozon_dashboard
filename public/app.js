@@ -1,4 +1,6 @@
-const API = '/api';
+const API = (typeof window !== 'undefined' && window.location && window.location.origin)
+  ? window.location.origin + '/api'
+  : '/api';
 
 /** GET с обходом кэша браузера (актуальные данные после синка) */
 function apiGet(path) {
@@ -164,8 +166,10 @@ let chartInstance = null;
 async function loadFinanceSummary() {
   try {
   const { date_from, date_to } = getPeriod();
-  const q = new URLSearchParams({ date_from, date_to });
-  const r = await fetch(API + '/finance-summary?' + q).then((x) => x.json()).catch(() => ({}));
+  const q = new URLSearchParams({ date_from: date_from || '', date_to: date_to || '' });
+  const res = await fetch(API + '/finance-summary?' + q);
+  if (!res.ok) throw new Error('API ' + res.status);
+  const r = await res.json().catch(() => ({}));
   const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
   set('card-total-gross', formatMoney(r.total_gross));
   set('card-received', formatMoney(r.received));
@@ -191,6 +195,7 @@ async function loadFinanceSummary() {
   if (barConsumables) barConsumables.style.width = consumablesPct + '%';
   } catch (e) {
     console.error('loadFinanceSummary error:', e);
+    showToast('Не удалось загрузить сводку. Проверьте сеть или нажмите «Обновить продажи».', 'error');
   }
 }
 
@@ -596,7 +601,8 @@ async function loadSalesSection() {
     updateOrdersInDelivery();
   } catch (e) {
     console.error('loadSalesSection error:', e);
-    showToast('Ошибка загрузки раздела', 'error');
+    showToast('Ошибка загрузки раздела. Проверьте сеть или нажмите «Обновить продажи».', 'error');
+    updateOrdersInDelivery();
   }
 }
 
