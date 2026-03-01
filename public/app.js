@@ -89,8 +89,9 @@ async function loadSales() {
   const tbody = document.getElementById('sales-tbody');
   tbody.innerHTML = list.map((s) => `
     <tr>
-      <td>${(s.date || s.created_at || '').slice(0, 10)}</td>
-      <td>${s.posting?.number || s.operation_id || '—'}</td>
+      <td>${(s.date || s.operation_date || s.created_at || '').slice(0, 10)}</td>
+      <td>${s.operation_type_name || s.type || '—'}</td>
+      <td>${s.posting?.posting_number || s.posting?.number || s.operation_id || '—'}</td>
       <td>${formatMoney(s.amount)}</td>
       <td>${formatMoney(s.price || s.seller_price)}</td>
       <td><input type="number" step="0.01" data-id="${s.transaction_id || s.id}" value="${s.actual_payout_rub ?? ''}" placeholder="вручную"></td>
@@ -133,12 +134,13 @@ function bindTableSort(tableId) {
 }
 
 function buildChart(sales) {
-  const { date_from, date_to } = getPeriod();
   const byDay = {};
   sales.forEach((s) => {
-    const d = (s.date || s.created_at || '').slice(0, 10);
+    const d = (s.date || s.operation_date || s.created_at || '').slice(0, 10);
+    if (!d) return;
     if (!byDay[d]) byDay[d] = { date: d, received: 0, amount: 0 };
-    byDay[d].received += Number(s.actual_payout_rub ?? s.amount ?? 0);
+    const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
+    byDay[d].received += amt > 0 ? amt : 0;
     byDay[d].amount += Number(s.amount ?? 0);
   });
   const labels = Object.keys(byDay).sort();
@@ -187,12 +189,14 @@ document.getElementById('btn-download-chart').addEventListener('click', () => {
   a.click();
 });
 
-document.getElementById('period-preset').addEventListener('change', setPeriodDates);
+document.getElementById('period-preset').addEventListener('change', () => {
+  setPeriodDates();
+  loadSalesSection();
+});
 document.getElementById('date-from').addEventListener('change', () => { loadSalesSection(); });
 document.getElementById('date-to').addEventListener('change', () => { loadSalesSection(); });
 
 async function loadSalesSection() {
-  setPeriodDates();
   await loadFinanceSummary();
   await loadSales();
 }

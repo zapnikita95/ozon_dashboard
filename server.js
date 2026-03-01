@@ -464,7 +464,10 @@ app.get('/api/finance-summary', (req, res) => {
     const d = toDateStr(s.date || s.operation_date || s.created_at);
     return d >= dateFrom && d <= dateTo;
   });
-  list.forEach((s) => { received += Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0); });
+  list.forEach((s) => {
+    const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
+    if (amt > 0) received += amt;
+  });
 
   const weeks = Math.max(1, (new Date(dateTo) - new Date(dateFrom)) / (7 * 24 * 60 * 60 * 1000));
   const adTotal = (Number(adSpend.weekly_budget) || 0) * weeks + (Array.isArray(adSpend.one_time) ? adSpend.one_time.reduce((a, x) => a + (Number(x.amount) || 0), 0) : 0);
