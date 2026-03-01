@@ -277,7 +277,8 @@ app.get('/api/sales', (req, res) => {
   res.json(list);
 });
 
-/** Данные для графика: по дням received, expenses (озон + расходники), orders, potential */
+/** Данные для графика: по дням received, expenses (озон + расходники), orders, potential. Potential = те же данные, что таблица «Проданные товары» (не доставлено). */
+const NON_GOODS_OPERATION_TYPES = ['Оплата эквайринга', 'Прочие расходы', 'Эквайринг', 'Комиссия за приём платежа'];
 app.get('/api/sales/chart-data', (req, res) => {
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
@@ -358,35 +359,19 @@ app.get('/api/sales/chart-data', (req, res) => {
     }
   });
 
-  // Потенциальная прибыль — ТОЛЬКО из postings: каждый постинг один раз, без возвратов и уже оплаченных
-  const paidPostingNumbers = new Set();
-  list.forEach((s) => {
-    const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
-    if (amt <= 0) return;
-    const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
-    if (pn && String(pn).includes('-')) paidPostingNumbers.add(String(pn));
+  // Потенциальная прибыль — строго из тех же строк, что и таблица «Проданные товары»: только не доставлено, по одному разу на постинг
+  const soldGoodsRows = getSoldGoodsRows(sales, postings, dateFrom, dateTo);
+  const potentialByPostingKey = new Map(); // (date + '\t' + posting_number) -> expected_cost (один раз на постинг)
+  soldGoodsRows.forEach((row) => {
+    if (row.delivered || row.expected_cost == null || row.expected_cost <= 0) return;
+    const key = row.date + '\t' + (row.posting_number || '');
+    if (potentialByPostingKey.has(key)) return;
+    potentialByPostingKey.set(key, row.expected_cost);
   });
-  const isExcludedForPotential = (p) => {
-    if (p.cancellation != null && typeof p.cancellation === 'object') return true;
-    const status = String(p.status || '').toLowerCase();
-    const substatus = String(p.substatus || '').toLowerCase();
-    if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(status) || /cancel|отмен|return|возврат|arbitration/.test(substatus)) return true;
-    if (String(p.type || '').toLowerCase() === 'returns') return true;
-    return false;
-  };
-  postings.forEach((p) => {
-    const num = p.posting_number || p.id;
-    if (!num || !String(num).includes('-')) return;
-    if (paidPostingNumbers.has(String(num))) return;
-    if (isExcludedForPotential(p)) return;
-    const potential = Number(p.potential_amount ?? 0);
-    if (potential <= 0) return;
-    const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
-    if (!d) return;
-    if (dateFrom && d < dateFrom) return;
-    if (dateTo && d > dateTo) return;
+  potentialByPostingKey.forEach((expected_cost, key) => {
+    const d = key.split('\t')[0];
     if (!byDay[d]) byDay[d] = { received: 0, ozon_expenses: 0, consumables: 0, orderPostings: new Set(), potential: 0 };
-    byDay[d].potential += potential;
+    byDay[d].potential += expected_cost;
   });
 
   const orderCountByDay = {};
@@ -797,6 +782,87 @@ function isOrderPosting(postingNumber) {
   return typeof postingNumber === 'string' && postingNumber.includes('-');
 }
 
+/** Общая функция: строки таблицы «Проданные товары» (дата, заказ, ожидаемая стоимость, доставлено). Один источник правды для таблицы и графика. */
+function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
+  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+  let list = sales.filter((s) => {
+    if (!Array.isArray(s.items) || !s.items.length) return false;
+    const posting_number = s.posting?.posting_number || s.posting?.number || '';
+    if (!isOrderPosting(posting_number)) return false;
+    const typeName = (s.operation_type_name || s.type || '').trim();
+    if (NON_GOODS_OPERATION_TYPES.some((t) => typeName.includes(t))) return false;
+    return true;
+  });
+  if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
+  if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
+
+  const result = [];
+  const deliveredPostings = new Set();
+  const products = readJson('products_cache.json', []);
+  const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id || ''), p]));
+  const bySku = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.sku || p.product_id || ''), p]));
+  const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
+  function productName(prod) {
+    if (!prod) return '';
+    const p = byProductId.get(String(prod.product_id || '')) || bySku.get(String(prod.sku || '')) || byOfferId.get(String(prod.offer_id || ''));
+    return (p && p.name) ? String(p.name).trim() : '';
+  }
+
+  list.forEach((s) => {
+    const date = toD(s.date || s.operation_date || s.created_at);
+    const posting_number = s.posting?.posting_number || s.posting?.number || '';
+    const delivered = Number(s.amount ?? 0) > 0;
+    const expected_cost = s.potential_amount != null ? Number(s.potential_amount) : (delivered ? Number(s.amount) : null);
+    if (delivered && posting_number) deliveredPostings.add(posting_number);
+    (s.items || []).forEach((it) => {
+      const name = (it.name || '').trim() || productName(it);
+      result.push({
+        date,
+        posting_number,
+        product_name: name || '—',
+        sku: it.sku,
+        quantity: Number(it.quantity) || 1,
+        expected_cost: expected_cost,
+        delivered,
+      });
+    });
+  });
+
+  const toDp = (v) => (v != null ? String(v).slice(0, 10) : '');
+  postings.forEach((p) => {
+    const num = p.posting_number || p.id;
+    if (!num || !String(num).includes('-')) return;
+    const prods = Array.isArray(p.products) && p.products.length ? p.products : null;
+    if (!prods) return;
+    const dateStr = toDp(p.date || p.in_process_at || p.created_at);
+    if (dateFrom && dateStr < dateFrom) return;
+    if (dateTo && dateStr > dateTo) return;
+    if (deliveredPostings.has(String(num))) return;
+    let expected_cost = p.potential_amount != null ? Number(p.potential_amount) : null;
+    if (expected_cost == null) {
+      expected_cost = prods.reduce((sum, prod) => {
+        const price = Number(prod.price ?? prod.final_price ?? 0) || 0;
+        const q = Number(prod.quantity) || 1;
+        return sum + price * q;
+      }, 0);
+    }
+    prods.forEach((prod) => {
+      const sku = prod.sku != null ? String(prod.sku) : (prod.product_id != null ? String(prod.product_id) : (prod.offer_id != null ? String(prod.offer_id) : ''));
+      result.push({
+        date: dateStr,
+        posting_number: num,
+        product_name: productName(prod) || '—',
+        sku: sku,
+        quantity: Number(prod.quantity) || 1,
+        expected_cost: expected_cost,
+        delivered: false,
+      });
+    });
+  });
+
+  return result;
+}
+
 /** Группировка по Заказ/Штрихкод: заказы (доход + расходы по заказу) и реклама по коду. */
 app.get('/api/sales/grouped', (req, res) => {
   const sales = readJson('sales.json', []);
@@ -883,83 +949,14 @@ app.get('/api/sales/grouped', (req, res) => {
   });
 });
 
-/** Список проданных товаров: дата, заказ, товар, sku, количество, ожидаемая стоимость, доставлено. Только реальные товары (не эквайринг и не прочие расходы). */
-const NON_GOODS_OPERATION_TYPES = ['Оплата эквайринга', 'Прочие расходы', 'Эквайринг', 'Комиссия за приём платежа'];
+/** Список проданных товаров: дата, заказ, товар, sku, количество, ожидаемая стоимость, доставлено. Только реальные товары (не эквайринг и не прочие расходы). Данные из getSoldGoodsRows — тот же источник, что и график «Потенциальная прибыль». */
 app.get('/api/sales/sold-goods', (req, res) => {
   const sales = readJson('sales.json', []);
+  const postings = readJson('postings.json', []);
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
   const deliveredFilter = (req.query.delivered || 'all').toLowerCase();
-  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
-  let list = sales.filter((s) => {
-    if (!Array.isArray(s.items) || !s.items.length) return false;
-    const posting_number = s.posting?.posting_number || s.posting?.number || '';
-    if (!isOrderPosting(posting_number)) return false;
-    const typeName = (s.operation_type_name || s.type || '').trim();
-    if (NON_GOODS_OPERATION_TYPES.some((t) => typeName.includes(t))) return false;
-    return true;
-  });
-  if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
-  if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
-
-  const result = [];
-  const deliveredPostings = new Set();
-  const products = readJson('products_cache.json', []);
-  const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id || ''), p]));
-  const bySku = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.sku || p.product_id || ''), p]));
-  const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
-  function productName(prod) {
-    if (!prod) return '';
-    const p = byProductId.get(String(prod.product_id || '')) || bySku.get(String(prod.sku || '')) || byOfferId.get(String(prod.offer_id || ''));
-    return (p && p.name) ? String(p.name).trim() : '';
-  }
-
-  list.forEach((s) => {
-    const date = toD(s.date || s.operation_date || s.created_at);
-    const posting_number = s.posting?.posting_number || s.posting?.number || '';
-    const delivered = Number(s.amount ?? 0) > 0;
-    const expected_cost = s.potential_amount != null ? Number(s.potential_amount) : (delivered ? Number(s.amount) : null);
-    if (delivered && posting_number) deliveredPostings.add(posting_number);
-    (s.items || []).forEach((it) => {
-      const name = (it.name || '').trim() || productName(it);
-      result.push({
-        date,
-        posting_number,
-        product_name: name || '—',
-        sku: it.sku,
-        quantity: Number(it.quantity) || 1,
-        expected_cost: expected_cost,
-        delivered,
-      });
-    });
-  });
-
-  const postings = readJson('postings.json', []);
-  const toDp = (v) => (v != null ? String(v).slice(0, 10) : '');
-  postings.forEach((p) => {
-    const num = p.posting_number || p.id;
-    if (!num || !String(num).includes('-')) return;
-    const prods = Array.isArray(p.products) && p.products.length ? p.products : null;
-    if (!prods) return;
-    const dateStr = toDp(p.date || p.in_process_at || p.created_at);
-    if (dateFrom && dateStr < dateFrom) return;
-    if (dateTo && dateStr > dateTo) return;
-    if (deliveredPostings.has(String(num))) return;
-    const expected_cost = p.potential_amount != null ? Number(p.potential_amount) : null;
-    prods.forEach((prod) => {
-      const sku = prod.sku != null ? String(prod.sku) : (prod.product_id != null ? String(prod.product_id) : (prod.offer_id != null ? String(prod.offer_id) : ''));
-      result.push({
-        date: dateStr,
-        posting_number: num,
-        product_name: productName(prod) || '—',
-        sku: sku,
-        quantity: Number(prod.quantity) || 1,
-        expected_cost: expected_cost,
-        delivered: false,
-      });
-    });
-  });
-
+  const result = getSoldGoodsRows(sales, postings, dateFrom, dateTo);
   let out = result;
   if (deliveredFilter === 'yes') out = result.filter((r) => r.delivered);
   else if (deliveredFilter === 'no') out = result.filter((r) => !r.delivered);
