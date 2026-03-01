@@ -1128,6 +1128,7 @@ app.get('/api/finance-summary', (req, res) => {
   const productTypes = readJson('product_types.json', {});
   const products = readJson('products_cache.json', []);
   const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
+  const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
   let presets = readJson('product_type_presets.json', []);
   if (!presets?.length) presets = [{ id: 'diffuser_50', name: 'Диффузор 50 мл' }, { id: 'diffuser_100', name: 'Диффузор 100 мл' }, { id: 'sachet', name: 'Саше' }];
   function costPerUnit(presetId) {
@@ -1154,10 +1155,11 @@ app.get('/api/finance-summary', (req, res) => {
     const items = ops.flatMap((s) => s.items || []);
     items.forEach((it) => {
       const sku = it.sku != null ? String(it.sku) : '';
-      const product = byProductId.get(sku);
-      const offerId = product?.offer_id != null ? String(product.offer_id) : '';
+      const product = byProductId.get(sku) || byOfferId.get(sku);
+      const offerId = product?.offer_id != null ? String(product.offer_id) : sku;
       const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
-      consumables += costPerUnit(presetId);
+      const qty = Number(it.quantity) || 1;
+      consumables += qty * costPerUnit(presetId);
     });
   });
 

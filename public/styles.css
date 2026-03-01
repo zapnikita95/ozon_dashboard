@@ -78,7 +78,7 @@ body {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -89,8 +89,17 @@ body {
   padding: 20px;
   box-shadow: var(--shadow);
   border: 1px solid var(--border);
+  min-width: 0;
 }
-.card-label { font-size: 0.85rem; color: var(--text-muted); display: block; margin-bottom: 8px; }
+.card-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .card-value { font-size: 1.5rem; font-weight: 700; }
 .card-value-tooltip { cursor: help; border-bottom: 1px dotted var(--text-muted); }
 .tooltip-trigger {
@@ -341,6 +350,9 @@ body {
 .expense-star:hover { color: var(--accent); }
 .expense-star.starred { color: #eab308; }
 
+@media (max-width: 1200px) {
+  .cards { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 900px) {
   .cards { grid-template-columns: repeat(2, 1fr); }
   .content { padding: 16px 20px; }
