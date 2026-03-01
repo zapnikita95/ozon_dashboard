@@ -162,11 +162,12 @@ async function loadFinanceSummary() {
   set('card-total-gross', formatMoney(r.total_gross));
   set('card-received', formatMoney(r.received));
   set('card-net', formatMoney(r.net_profit));
-  set('card-expenses', formatMoney(r.expenses));
+  const ozonTotal = Number(r.ozon_total) || Number(r.ad_expenses) + Number(r.ozon_expenses) || 0;
+  set('card-expenses', formatMoney(ozonTotal));
   set('card-ad', formatMoney(r.ad_spend));
   set('margin-value', (r.margin_percent != null ? r.margin_percent : '—') + ' %');
-  const total = Number(r.expenses) || 1;
-  const adPct = ((Number(r.ad_spend) || 0) / total * 100).toFixed(0);
+  const total = ozonTotal || 1;
+  const adPct = ((Number(r.ad_expenses) || 0) / total * 100).toFixed(0);
   const ozonPct = ((Number(r.ozon_expenses) || 0) / total * 100).toFixed(0);
   const consPct = ((Number(r.consumables) || 0) / total * 100).toFixed(0);
   const barAd = document.getElementById('bar-ad');

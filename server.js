@@ -952,6 +952,7 @@ app.get('/api/finance-summary', (req, res) => {
     received,
     ozon_expenses,
     ad_expenses,
+    ozon_total: ad_expenses + ozon_expenses,
     consumables,
     net_profit: netProfit,
     expenses: totalExpenses,
