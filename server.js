@@ -287,30 +287,12 @@ app.get('/api/sales', (req, res) => {
 const NON_GOODS_OPERATION_TYPES = ['Оплата эквайринга', 'Прочие расходы', 'Эквайринг', 'Комиссия за приём платежа'];
 /** В «Фактически получено» — только операции, похожие на реальную выплату (выплата/перевод/зачисление), чтобы начисления не дублировали график. */
 const RECEIVED_OPERATION_MATCH = /выплата|перевод|зачисление|оплата заказа|доставлено/i;
-app.get('/api/sales/chart-data', async (req, res) => {
+app.get('/api/sales/chart-data', (req, res) => {
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
   const sales = readJson('sales.json', []);
   const overrides = readJson('payout_overrides.json', {});
-  let postings = readJson('postings.json', []);
-  const cached = Array.isArray(postings) ? postings : [];
-  try {
-    const toIso = (dateTo || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
-    const fromIso = (dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
-    const fromOzon = await ozon.getPostingsListRange(fromIso, toIso);
-    if (Array.isArray(fromOzon) && fromOzon.length > 0) {
-      const byNum = new Map(cached.map((p) => [String(p.posting_number || p.id), p]));
-      postings = fromOzon.map((p) => {
-        const num = p.posting_number || p.id;
-        const rec = byNum.get(String(num));
-        return rec ? { ...p, ...rec, potential_amount: p.potential_amount ?? rec.potential_amount ?? rec.sum } : p;
-      });
-    }
-  } catch (e) {
-    console.error('chart-data: fetch postings from Ozon:', e.message);
-    if (!Array.isArray(postings) || postings.length === 0) postings = cached;
-  }
-  if (!Array.isArray(postings)) postings = [];
+  const postings = readJson('postings.json', []);
   const productTypes = readJson('product_types.json', {});
   const expensePerPreset = readJson('expense_per_preset.json', {});
   let expenseItems = readJson('expense_items.json', []);
@@ -1692,7 +1674,7 @@ async function startupSync() {
   if (!process.env.OZON_CLIENT_ID || !process.env.OZON_API_KEY) return;
   const meta = readJson('sync_meta.json', {});
   const lastSync = meta.postings_synced_at ? new Date(meta.postings_synced_at).getTime() : 0;
-  if (Date.now() - lastSync < 4 * 60 * 60 * 1000) {
+  if (Date.now() - lastSync < 30 * 60 * 1000) {
     console.log('[startup] postings recently synced, skipping.');
     return;
   }
@@ -1702,36 +1684,59 @@ async function startupSync() {
     const toIso = now.toISOString().slice(0, 10) + 'T23:59:59.999Z';
     const fromIso = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
     const list = await ozon.getPostingsListRange(fromIso, toIso);
+
+    // Загружаем существующий кэш, чтобы не потерять potential_amount по уже синкнутым постингам
+    const existing = readJson('postings.json', []);
+    const byNumExisting = new Map(existing.map((p) => [String(p.posting_number || p.id), p]));
+
     const byNum = new Map();
     for (const p of list) {
       const num = p.posting_number || p.id;
       if (!num) continue;
-      const rec = { ...p, posting_number: num, date: toDateMoscow(p.in_process_at || p.created_at) };
-      try {
-        const detail = await ozon.getPostingByNumber(num);
-        if (detail) {
-          if (Number(detail.sum) > 0) rec.potential_amount = detail.sum;
-          const r = detail.result || {};
-          if (r.status) rec.status = r.status;
-          if (r.substatus) rec.substatus = r.substatus;
-          if (r.cancellation) rec.cancellation = r.cancellation;
-          const prods = r.products || detail.products || [];
-          if (Array.isArray(prods) && prods.length) {
-            rec.products = prods.map((x) => ({
-              offer_id: x.offer_id != null ? String(x.offer_id) : '',
-              product_id: x.product_id != null ? String(x.product_id) : '',
-              sku: x.sku != null ? String(x.sku) : '',
-              quantity: Number(x.quantity) || 1,
-            }));
+      const cached = byNumExisting.get(String(num));
+
+      // potential_amount: из кэша (если уже есть), из financial_data Ozon, иначе из продуктов листа
+      let potential_amount = cached?.potential_amount ?? null;
+      if (!potential_amount || potential_amount <= 0) {
+        // financial_data.posting_services.marketplace_service_item_fulfillment — нет, нужна сумма товара
+        const fd = p.financial_data;
+        if (fd) {
+          const fdSum = Number(fd.products?.reduce?.((a, x) => a + (Number(x.price ?? 0) * (Number(x.quantity) || 1)), 0) ?? 0);
+          if (fdSum > 0) potential_amount = fdSum;
+        }
+        if (!potential_amount || potential_amount <= 0) {
+          const prods = Array.isArray(p.products) ? p.products : [];
+          if (prods.length > 0) {
+            const sum = prods.reduce((acc, x) => acc + (Number(x.price ?? x.sum_price ?? 0) || 0) * (Number(x.quantity) || 1), 0);
+            if (sum > 0) potential_amount = sum;
           }
         }
-      } catch (_) { /* ignore single posting error */ }
+      }
+
+      const rec = {
+        ...(cached || {}),
+        ...p,
+        posting_number: num,
+        date: toDateMoscow(p.in_process_at || p.created_at) || (p.in_process_at || p.created_at || '').toString().slice(0, 10),
+        status: p.status || cached?.status,
+        substatus: p.substatus || cached?.substatus,
+        potential_amount: potential_amount,
+        products: Array.isArray(p.products) && p.products.length
+          ? p.products.map((x) => ({
+              offer_id: x.offer_id != null ? String(x.offer_id) : '',
+              product_id: x.product_id != null ? String(x.product_id) : '',
+              sku: x.sku != null ? String(x.sku) : (x.offer_id != null ? String(x.offer_id) : ''),
+              quantity: Number(x.quantity) || 1,
+              price: Number(x.price ?? x.sum_price ?? 0) || 0,
+            }))
+          : (cached?.products || []),
+      };
       byNum.set(String(num), rec);
-      await delay(150);
     }
+
     writeJson('postings.json', Array.from(byNum.values()));
     writeJson('sync_meta.json', { ...meta, postings_synced_at: new Date().toISOString() });
-    console.log(`[startup] Synced ${byNum.size} postings.`);
+    console.log(`[startup] Synced ${byNum.size} postings (delivering: ${Array.from(byNum.values()).filter(p => p.status === 'delivering').length}).`);
   } catch (e) {
     console.error('[startup] Sync failed:', e.message);
   }
