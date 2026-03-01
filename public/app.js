@@ -578,9 +578,11 @@ async function loadCostsSection() {
       starredEl.innerHTML = starred.map((e) => {
         const r = remainderById.get(e.id);
         const rem = r ? r.remaining : (e.remaining != null && e.remaining !== '' ? Number(e.remaining) : null);
+        const name = e.name || '';
+        const nameAttr = name.replace(/"/g, '&quot;');
         return `
         <div class="remainder-card">
-          <div class="remainder-name">${e.name}</div>
+          <div class="remainder-name" title="${nameAttr}">${name}</div>
           <div class="remainder-value">${rem != null ? rem : '—'} ${e.unit || 'шт'}</div>
         </div>
       `;
@@ -750,20 +752,19 @@ async function loadCostsSection() {
 document.getElementById('btn-refresh-costs')?.addEventListener('click', async () => {
   const btn = document.getElementById('btn-refresh-costs');
   if (btn) btn.disabled = true;
-  showToast('Обновление продаж и товаров с Ozon…');
+  showToast('Обновление товаров и пересчёт остатков…');
   try {
-    const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const salesRes = await fetch(API + '/sales/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_from: from, date_to: to }) }).then((r) => r.json()).catch(() => ({}));
-    if (salesRes.ok) showToast('Продажи обновлены, загружаю товары…');
     const res = await fetch(API + '/products/sync', { method: 'POST' }).then((r) => r.json()).catch(() => ({}));
-    if (res.ok) {
-      showToast('Готово. Товаров: ' + (res.count ?? 0) + (salesRes.ok ? ', продажи с составом заказов обновлены' : ''));
-      await loadCostsSection();
-      showToast('Себестоимость и остатки обновлены.');
-    } else {
-      showToast(res.error || 'Ошибка загрузки', 'error');
+    if (!res.ok) {
+      showToast(res.error || 'Ошибка загрузки товаров', 'error');
+      if (btn) btn.disabled = false;
+      return;
     }
+    showToast('Товары загружены. Пересчитываю остатки расходников…');
+    const enrichRes = await fetch(API + '/sales/enrich-items', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).then((r) => r.json()).catch((e) => ({ ok: false, error: e.message }));
+    await loadCostsSection();
+    showToast('Готово. Товаров: ' + (res.count ?? 0) + (enrichRes.ok ? '. Остатки пересчитаны.' : ''));
+    if (!enrichRes.ok) showToast('Пересчёт остатков: ' + (enrichRes.error || 'ошибка'), 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -874,24 +875,32 @@ document.getElementById('btn-refresh-products')?.addEventListener('click', async
 });
 
 async function loadStocks() {
-  const list = await apiGet('/stocks').catch(() => []);
-  const productsRaw = await apiGet('/products').catch(() => []);
+  const [stocksRaw, productsRaw] = await Promise.all([
+    apiGet('/stocks').catch(() => []),
+    apiGet('/products').catch(() => []),
+  ]);
   const products = Array.isArray(productsRaw) ? productsRaw : [];
-  const byOffer = new Map(products.map((p) => [p.offer_id, p]));
+  const stocks = Array.isArray(stocksRaw) ? stocksRaw : [];
+  const stockByOffer = new Map(stocks.map((s) => [String(s.offer_id || ''), s]));
+  const stockByProduct = new Map(stocks.map((s) => [String(s.product_id || ''), s]));
   const tbody = document.getElementById('stocks-tbody');
   if (!tbody) return;
-  const items = Array.isArray(list) ? list : [];
-  tbody.innerHTML = items.map((s) => {
-    const stockArr = Array.isArray(s.stocks) ? s.stocks : [];
+  if (!products.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted)">Нажмите «↻» чтобы загрузить товары с Ozon.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = products.map((p) => {
+    const si = stockByOffer.get(String(p.offer_id || '')) || stockByProduct.get(String(p.product_id || ''));
+    const stockArr = Array.isArray(si?.stocks) ? si.stocks : [];
     const stock = stockArr.length
       ? stockArr.reduce((acc, st) => acc + (Number(st.present) || 0) + (Number(st.reserved) || 0), 0)
-      : (Number(s.stock ?? 0) + Number(s.reserved ?? 0));
-    const name = (byOffer.get(s.offer_id) || {}).name || s.offer_id || s.product_id;
+      : (Number(si?.stock ?? 0) + Number(si?.reserved ?? 0));
+    const name = p.name || p.offer_id || p.product_id;
     return `<tr>
-      <td><input type="checkbox" class="stock-cb" data-product-id="${s.product_id}" data-offer-id="${s.offer_id}"></td>
+      <td><input type="checkbox" class="stock-cb" data-product-id="${p.product_id}" data-offer-id="${p.offer_id}"></td>
       <td>${name}</td>
       <td>${stock}</td>
-      <td><input type="number" min="0" class="stock-edit" data-product-id="${s.product_id}" data-offer-id="${s.offer_id}" value="${stock}" placeholder="${stock}" style="width:80px"></td>
+      <td><input type="number" min="0" class="stock-edit" data-product-id="${p.product_id}" data-offer-id="${p.offer_id}" value="${stock}" placeholder="${stock}" style="width:80px"></td>
     </tr>`;
   }).join('');
 }
