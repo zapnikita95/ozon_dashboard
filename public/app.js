@@ -174,9 +174,10 @@ async function loadFinanceSummary() {
   set('card-consumables', formatMoney(r.consumables));
   set('card-ad', formatMoney(r.ad_spend));
   set('margin-value', (r.margin_percent != null ? r.margin_percent : '—') + ' %');
-  set('pct-consumables', formatMoney(r.consumables));
   const totalGross = Number(r.total_gross) || 0;
   const adSpend = Number(r.ad_spend) || 0;
+  const consumablesPct = totalGross > 0 ? ((Number(r.consumables) || 0) / totalGross * 100).toFixed(1) : 0;
+  set('pct-consumables', consumablesPct + '%');
   const ozonPct = totalGross > 0 ? ((ozonTotal / totalGross) * 100).toFixed(1) : 0;
   const adPct = totalGross > 0 ? ((adSpend / totalGross) * 100).toFixed(1) : 0;
   set('pct-ozon', ozonPct + '%');
@@ -185,6 +186,8 @@ async function loadFinanceSummary() {
   if (barOzon) barOzon.style.width = ozonPct + '%';
   const barAd = document.getElementById('bar-ad');
   if (barAd) barAd.style.width = adPct + '%';
+  const barConsumables = document.getElementById('bar-consumables');
+  if (barConsumables) barConsumables.style.width = consumablesPct + '%';
   } catch (e) {
     console.error('loadFinanceSummary error:', e);
   }
@@ -245,6 +248,7 @@ async function loadSales() {
   bindTableSort('sales-table');
   const dateTh = document.querySelector('#sales-table thead th[data-sort="date"]');
   if (dateTh) dateTh.classList.add('sort-desc');
+  applyTableExpandCollapse('sales-tbody');
   const chartQ = new URLSearchParams({ date_from, date_to });
   let chartData = null;
   try {
@@ -289,6 +293,48 @@ function bindTableSort(tableId) {
   });
 }
 
+const ROWS_VISIBLE_DEFAULT = 20;
+
+/** Показывать первые 20 строк таблицы, остальные скрывать с кнопкой «Показать ещё» / «Свернуть». */
+function applyTableExpandCollapse(tbody) {
+  const el = typeof tbody === 'string' ? document.getElementById(tbody) : tbody;
+  if (!el) return;
+  const rows = el.querySelectorAll('tr');
+  const tableWrap = el.closest('.table-wrap');
+  if (!tableWrap) return;
+  let wrap = tableWrap.querySelector('.expand-toggle-wrap');
+  if (rows.length <= ROWS_VISIBLE_DEFAULT) {
+    if (wrap) wrap.remove();
+    rows.forEach((r) => r.classList.remove('row-collapsed-hidden'));
+    return;
+  }
+  rows.forEach((r, i) => {
+    if (i >= ROWS_VISIBLE_DEFAULT) r.classList.add('row-collapsed-hidden');
+    else r.classList.remove('row-collapsed-hidden');
+  });
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.className = 'expand-toggle-wrap';
+    tableWrap.appendChild(wrap);
+  }
+  const moreCount = rows.length - ROWS_VISIBLE_DEFAULT;
+  wrap.innerHTML = `<button type="button" class="btn btn-small toggle-more">Показать ещё (${moreCount})</button>`;
+  wrap.querySelector('button').onclick = () => {
+    const hidden = el.querySelectorAll('tr.row-collapsed-hidden');
+    if (hidden.length > 0) {
+      hidden.forEach((r) => r.classList.remove('row-collapsed-hidden'));
+      wrap.innerHTML = '<button type="button" class="btn btn-small toggle-more">Свернуть</button>';
+      wrap.querySelector('button').onclick = () => applyTableExpandCollapse(el);
+    } else {
+      rows.forEach((r, i) => {
+        if (i >= ROWS_VISIBLE_DEFAULT) r.classList.add('row-collapsed-hidden');
+      });
+      wrap.innerHTML = `<button type="button" class="btn btn-small toggle-more">Показать ещё (${moreCount})</button>`;
+      wrap.querySelector('button').onclick = () => applyTableExpandCollapse(el);
+    }
+  };
+}
+
 document.querySelectorAll('.toggle-view[data-view]').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.toggle-view').forEach((b) => b.classList.remove('active'));
@@ -320,6 +366,7 @@ async function loadSalesGroupedView() {
     `).join('');
     const dateThOrder = document.querySelector('#orders-table thead th[data-sort="date"]');
     if (dateThOrder) { dateThOrder.classList.add('sort-desc'); document.querySelectorAll('#orders-table thead th[data-sort]').forEach((h) => { if (h !== dateThOrder) h.classList.remove('sort-desc'); }); }
+    applyTableExpandCollapse('orders-tbody');
   }
   if (adTbody) {
     adTbody.innerHTML = (r.ad_codes || []).map((a) => `
@@ -328,6 +375,7 @@ async function loadSalesGroupedView() {
         <td>${formatMoney(a.total)}</td>
       </tr>
     `).join('');
+    applyTableExpandCollapse('ad-codes-tbody');
   }
 }
 
@@ -354,6 +402,7 @@ async function loadSoldGoods() {
   `).join('');
   const dateThSold = document.querySelector('#sold-goods-table thead th[data-sort="date"]');
   if (dateThSold) { dateThSold.classList.add('sort-desc'); document.querySelectorAll('#sold-goods-table thead th[data-sort]').forEach((h) => { if (h !== dateThSold) h.classList.remove('sort-desc'); }); }
+  applyTableExpandCollapse('sold-goods-tbody');
 }
 
 function bindSoldGoodsDeliveredFilter() {
@@ -564,10 +613,13 @@ async function updateOrdersInDelivery() {
 
 document.getElementById('btn-sync-sales')?.addEventListener('click', async () => {
   const period = getPeriod();
-  showToast('Загрузка…');
+  showToast('Загрузка с Ozon…');
   const res = await fetch(API + '/sales/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(period) }).then((r) => r.json()).catch((e) => ({ ok: false, error: e.message }));
   if (res.ok) {
-    showToast('Загружено записей: ' + (res.count ?? 0));
+    const msg = res.potentialFetched != null && res.potentialFetched > 0
+      ? `Загружено записей: ${res.count ?? 0}, потенциальная прибыль подставлена для ${res.potentialFetched} заказов`
+      : `Загружено записей: ${res.count ?? 0}`;
+    showToast(msg);
     loadSalesSection();
   } else {
     showToast(res.error || res.hint || 'Ошибка синхронизации', 'error');

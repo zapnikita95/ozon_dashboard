@@ -234,6 +234,8 @@ body {
 .margin-row { display: flex; align-items: center; gap: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 
 .table-wrap { overflow-x: auto; }
+.row-collapsed-hidden { display: none; }
+.expand-toggle-wrap { margin-top: 8px; }
 .data-table {
   width: 100%;
   border-collapse: collapse;

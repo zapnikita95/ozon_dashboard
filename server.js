@@ -8,10 +8,33 @@ const ozon = require('./lib/ozon');
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 const PORT = process.env.PORT || 3000;
-// Для Railway: примонтируйте Volume и задайте DATA_DIR=/data (или путь к тому), иначе при каждом деплое данные (расходники, продажи и т.д.) будут теряться.
-// Приложение никогда не перезаписывает JSON-файлы пустыми данными при старте — только по действиям пользователя (POST/PUT/DELETE).
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+// Каталог данных: переменная DATA_DIR или /data при смонтированном томе, иначе ./data. Один и тот же путь везде — данные не теряются при деплое.
+const DATA_DIR = process.env.DATA_DIR || (fs.existsSync('/data') ? '/data' : path.join(__dirname, 'data'));
 if (process.env.NODE_ENV !== 'test') console.log('DATA_DIR=', DATA_DIR);
+
+/** Пауза (мс). Нужна между запросами к Ozon, чтобы не срабатывал rate limit — и локально, и на Railway считалось одинаково. */
+function delay(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Дата в Москве YYYY-MM-DD от любой ISO/даты — чтобы локально и на Railway один и тот же день не разъезжался по часовым поясам. */
+function toDateMoscow(v) {
+  if (v == null || v === '') return '';
+  const str = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return str.slice(0, 10);
+  const s = d.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const parts = s.split('.');
+  if (parts.length >= 3) {
+    const [day, month, year] = parts;
+    const y = year.replace(/\D/g, '');
+    const m = month.replace(/\D/g, '').padStart(2, '0');
+    const dd = day.replace(/\D/g, '').padStart(2, '0');
+    if (y.length >= 4) return `${y}-${m}-${dd}`;
+  }
+  return str.slice(0, 10);
+}
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -35,6 +58,7 @@ function writeJson(name, data) {
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
 // ——— Products ———
 app.get('/api/products', async (req, res) => {
@@ -267,7 +291,7 @@ app.get('/api/sales/chart-data', (req, res) => {
   const products = readJson('products_cache.json', []);
   const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
   const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
-  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+  const toD = (v) => (v != null ? toDateMoscow(v) : '');
   const postingToDeliveryDate = new Map();
   postings.forEach((p) => {
     const num = p.posting_number || p.id;
@@ -302,6 +326,7 @@ app.get('/api/sales/chart-data', (req, res) => {
   });
 
   const byDay = {};
+  const potentialAlreadyFromSales = new Set();
   list.forEach((s) => {
     const dOp = toD(s.date || s.operation_date || s.created_at);
     const dDel = toD(s.delivery_date || s.date || s.operation_date || s.created_at);
@@ -332,10 +357,12 @@ app.get('/api/sales/chart-data', (req, res) => {
         byDay[dAttr].consumables += cost;
       }
     }
-    byDay[dOp].potential += Number(s.potential_amount ?? 0);
+    const potentialOp = Number(s.potential_amount ?? 0);
+    byDay[dOp].potential += potentialOp;
+    if (potentialOp > 0 && pn && String(pn).includes('-')) potentialAlreadyFromSales.add(String(pn));
   });
 
-  // Потенциальная прибыль по заказам из postings: заказы, по которым ещё не поступила оплата в sales; без отменённых и возвратов
+  // Потенциальная прибыль по заказам из postings: только те, что ещё НЕ учтены в sales (чтобы не дублировать 2353+2353=4706)
   const paidPostingNumbers = new Set();
   list.forEach((s) => {
     const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
@@ -354,6 +381,7 @@ app.get('/api/sales/chart-data', (req, res) => {
     const num = p.posting_number || p.id;
     if (!num || !String(num).includes('-')) return;
     if (paidPostingNumbers.has(String(num))) return;
+    if (potentialAlreadyFromSales.has(String(num))) return;
     if (excludeStatusForPotential(p.status, p.substatus, p.cancellation)) return;
     const potential = Number(p.potential_amount ?? 0);
     if (potential <= 0) return;
@@ -523,13 +551,26 @@ app.post('/api/postings/sync', async (req, res) => {
 
 app.post('/api/sales/sync', async (req, res) => {
   try {
+    if (!process.env.OZON_CLIENT_ID || !process.env.OZON_API_KEY) {
+      return res.status(200).json({
+        ok: false,
+        error: 'Задайте OZON_CLIENT_ID и OZON_API_KEY в переменных окружения (на Railway: вкладка Variables сервиса).',
+      });
+    }
     const { date_from, date_to } = req.body || {};
     const from = date_from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const to = date_to || new Date().toISOString().slice(0, 10);
+    const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
     const existing = readJson('sales.json', []);
-    const byId = new Map(existing.map((s) => [String(s.transaction_id ?? s.id), { ...s }]));
+    const byId = new Map();
+    existing.forEach((s) => {
+      const d = toD(s.date || s.operation_date || s.created_at);
+      if (d < from || d > to) {
+        const id = String(s.transaction_id ?? s.id ?? '');
+        if (id) byId.set(id, { ...s });
+      }
+    });
 
-    // Ozon: только один месяц за запрос — разбиваем период на месячные куски (даты без timezone)
     function monthChunks(fromStr, toStr) {
       const fromD = new Date(fromStr + 'T12:00:00Z');
       const toD = new Date(toStr + 'T12:00:00Z');
@@ -561,7 +602,7 @@ app.post('/api/sales/sync', async (req, res) => {
           const id = String(op.id ?? op.operation_id ?? op.transaction_id ?? '');
           if (!id) return;
           const rawDate = op.operation_date ?? op.date ?? op.created_at ?? op.last_activity_date;
-          const dateStr = rawDate != null ? String(rawDate).slice(0, 10) : '';
+          const dateStr = rawDate != null ? toDateMoscow(rawDate) : '';
           byId.set(id, { ...op, transaction_id: id, date: dateStr || rawDate });
         });
         hasMore = ops.length === 100;
@@ -571,29 +612,35 @@ app.post('/api/sales/sync', async (req, res) => {
 
     const arr = Array.from(byId.values());
 
-    // Потенциальная сумма по недоставленным заказам — из деталей постинга (тип «Заказ (ожидание)» или любой заказ без оплаты)
-    const awaitingType = 'Заказ (ожидание)';
+    let potentialFetched = 0;
+    let firstPotential = true;
     for (const s of arr) {
       const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
       if (!postingNumber || !String(postingNumber).includes('-')) continue;
-      const typeName = (s.operation_type_name || s.type || '').trim();
-      const isAwaiting = typeName === awaitingType;
       const noPayment = Number(s.amount ?? 0) <= 0;
-      const needPotential = (isAwaiting || noPayment) && (s.potential_amount == null || Number(s.potential_amount) <= 0);
+      const needPotential = noPayment && (s.potential_amount == null || Number(s.potential_amount) <= 0);
       if (!needPotential) continue;
+      if (!firstPotential) await delay(350);
+      firstPotential = false;
       try {
         const detail = await ozon.getPostingByNumber(postingNumber);
-        if (detail && Number(detail.sum) > 0) s.potential_amount = detail.sum;
+        if (detail && Number(detail.sum) > 0) {
+          s.potential_amount = detail.sum;
+          potentialFetched++;
+        }
       } catch (e) {
         // один сбой по одному постингу не ломаем весь синк
       }
     }
 
     // Состав заказа (items) для расчёта остатков расходников: подтягиваем из постинга или дополняем offer_id
+    let firstItems = true;
     for (const s of arr) {
       const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
       if (!postingNumber || !String(postingNumber).includes('-')) continue;
       if (Number(s.amount ?? 0) <= 0) continue;
+      if (!firstItems) await delay(350);
+      firstItems = false;
       try {
         const detail = await ozon.getPostingByNumber(postingNumber);
         const products = detail?.result?.products || [];
@@ -639,11 +686,14 @@ app.post('/api/sales/sync', async (req, res) => {
       const postings = await ozon.getPostingsList({ in_process_at_from: since, in_process_at_to: toIso });
       const existingPostings = readJson('postings.json', []);
       const byPostingNum = new Map(existingPostings.map((p) => [String(p.posting_number || p.id), p]));
+      let firstPosting = true;
       for (const p of postings) {
         const num = p.posting_number || p.id;
         if (!num) continue;
+        if (!firstPosting) await delay(350);
+        firstPosting = false;
         const existing = byPostingNum.get(String(num));
-        const rec = { ...p, posting_number: num, date: (p.in_process_at || p.created_at || '').toString().slice(0, 10) };
+        const rec = { ...p, posting_number: num, date: toDateMoscow(p.in_process_at || p.created_at) || (p.in_process_at || p.created_at || '').toString().slice(0, 10) };
         try {
           const detail = await ozon.getPostingByNumber(num);
           if (detail) {
@@ -666,10 +716,14 @@ app.post('/api/sales/sync', async (req, res) => {
       console.error('postings sync (non-fatal):', postingErr.message);
     }
 
-    res.json({ ok: true, count: arr.length });
+    res.json({ ok: true, count: arr.length, potentialFetched });
   } catch (e) {
     console.error('sales/sync error:', e.message);
-    res.status(200).json({ ok: false, error: e.message, hint: 'Данные по продажам можно указать вручную или проверить креды Ozon.' });
+    res.status(200).json({
+      ok: false,
+      error: e.message,
+      hint: 'Проверьте OZON_CLIENT_ID и OZON_API_KEY в переменных окружения (Railway: Variables).',
+    });
   }
 });
 
@@ -826,19 +880,37 @@ app.get('/api/sales/grouped', (req, res) => {
   });
 });
 
-/** Список проданных товаров: дата, заказ, товар, sku, количество, ожидаемая стоимость, доставлено. Включает и выкупленные, и не доставленные. */
+/** Список проданных товаров: дата, заказ, товар, sku, количество, ожидаемая стоимость, доставлено. Только реальные товары (не эквайринг и не прочие расходы). */
+const NON_GOODS_OPERATION_TYPES = ['Оплата эквайринга', 'Прочие расходы', 'Эквайринг', 'Комиссия за приём платежа'];
 app.get('/api/sales/sold-goods', (req, res) => {
   const sales = readJson('sales.json', []);
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
   const deliveredFilter = (req.query.delivered || 'all').toLowerCase();
   const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
-  let list = sales.filter((s) => Array.isArray(s.items) && s.items.length);
+  let list = sales.filter((s) => {
+    if (!Array.isArray(s.items) || !s.items.length) return false;
+    const posting_number = s.posting?.posting_number || s.posting?.number || '';
+    if (!isOrderPosting(posting_number)) return false;
+    const typeName = (s.operation_type_name || s.type || '').trim();
+    if (NON_GOODS_OPERATION_TYPES.some((t) => typeName.includes(t))) return false;
+    return true;
+  });
   if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
   if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
 
   const result = [];
   const deliveredPostings = new Set();
+  const products = readJson('products_cache.json', []);
+  const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id || ''), p]));
+  const bySku = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.sku || p.product_id || ''), p]));
+  const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
+  function productName(prod) {
+    if (!prod) return '';
+    const p = byProductId.get(String(prod.product_id || '')) || bySku.get(String(prod.sku || '')) || byOfferId.get(String(prod.offer_id || ''));
+    return (p && p.name) ? String(p.name).trim() : '';
+  }
+
   list.forEach((s) => {
     const date = toD(s.date || s.operation_date || s.created_at);
     const posting_number = s.posting?.posting_number || s.posting?.number || '';
@@ -846,10 +918,11 @@ app.get('/api/sales/sold-goods', (req, res) => {
     const expected_cost = s.potential_amount != null ? Number(s.potential_amount) : (delivered ? Number(s.amount) : null);
     if (delivered && posting_number) deliveredPostings.add(posting_number);
     (s.items || []).forEach((it) => {
+      const name = (it.name || '').trim() || productName(it);
       result.push({
         date,
         posting_number,
-        product_name: it.name || '',
+        product_name: name || '—',
         sku: it.sku,
         quantity: Number(it.quantity) || 1,
         expected_cost: expected_cost,
@@ -863,18 +936,24 @@ app.get('/api/sales/sold-goods', (req, res) => {
   postings.forEach((p) => {
     const num = p.posting_number || p.id;
     if (!num || !String(num).includes('-')) return;
+    const prods = Array.isArray(p.products) && p.products.length ? p.products : null;
+    if (!prods) return;
     const dateStr = toDp(p.date || p.in_process_at || p.created_at);
     if (dateFrom && dateStr < dateFrom) return;
     if (dateTo && dateStr > dateTo) return;
     if (deliveredPostings.has(String(num))) return;
-    result.push({
-      date: dateStr,
-      posting_number: num,
-      product_name: '—',
-      sku: '',
-      quantity: 1,
-      expected_cost: p.potential_amount != null ? Number(p.potential_amount) : null,
-      delivered: false,
+    const expected_cost = p.potential_amount != null ? Number(p.potential_amount) : null;
+    prods.forEach((prod) => {
+      const sku = prod.sku != null ? String(prod.sku) : (prod.product_id != null ? String(prod.product_id) : (prod.offer_id != null ? String(prod.offer_id) : ''));
+      result.push({
+        date: dateStr,
+        posting_number: num,
+        product_name: productName(prod) || '—',
+        sku: sku,
+        quantity: Number(prod.quantity) || 1,
+        expected_cost: expected_cost,
+        delivered: false,
+      });
     });
   });
 
