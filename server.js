@@ -1430,4 +1430,51 @@ app.post('/api/description', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Ozon Dashboard: http://localhost:${PORT}`));
+async function startupSync() {
+  if (!process.env.OZON_CLIENT_ID || !process.env.OZON_API_KEY) return;
+  const existing = readJson('postings.json', []);
+  if (Array.isArray(existing) && existing.length > 0) return;
+  console.log('[startup] postings.json empty, syncing from Ozon...');
+  try {
+    const now = new Date();
+    const toIso = now.toISOString().slice(0, 10) + 'T23:59:59.999Z';
+    const fromIso = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
+    const list = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
+    const byNum = new Map();
+    for (const p of list) {
+      const num = p.posting_number || p.id;
+      if (!num) continue;
+      const rec = { ...p, posting_number: num, date: toDateMoscow(p.in_process_at || p.created_at) };
+      try {
+        const detail = await ozon.getPostingByNumber(num);
+        if (detail) {
+          if (Number(detail.sum) > 0) rec.potential_amount = detail.sum;
+          const r = detail.result || {};
+          if (r.status) rec.status = r.status;
+          if (r.substatus) rec.substatus = r.substatus;
+          if (r.cancellation) rec.cancellation = r.cancellation;
+          const prods = r.products || detail.products || [];
+          if (Array.isArray(prods) && prods.length) {
+            rec.products = prods.map((x) => ({
+              offer_id: x.offer_id != null ? String(x.offer_id) : '',
+              product_id: x.product_id != null ? String(x.product_id) : '',
+              sku: x.sku != null ? String(x.sku) : '',
+              quantity: Number(x.quantity) || 1,
+            }));
+          }
+        }
+      } catch (_) { /* ignore single posting error */ }
+      byNum.set(String(num), rec);
+      await delay(150);
+    }
+    writeJson('postings.json', Array.from(byNum.values()));
+    console.log(`[startup] Synced ${byNum.size} postings.`);
+  } catch (e) {
+    console.error('[startup] Sync failed:', e.message);
+  }
+}
+
+app.listen(PORT, () => {
+  console.log(`Ozon Dashboard: http://localhost:${PORT}`);
+  startupSync().catch((e) => console.error('[startup-sync]', e.message));
+});
