@@ -198,7 +198,9 @@ body {
 
 .costs-toolbar { position: absolute; top: 16px; right: 24px; z-index: 5; }
 #section-costs { position: relative; padding-top: 48px; }
+#section-warehouse { padding-top: 24px; }
 #section-products { position: relative; padding-top: 48px; }
+.chart-wrap-horizontal-bars { height: 280px; }
 .products-toolbar { position: absolute; top: 16px; right: 24px; z-index: 5; }
 .btn-refresh-costs {
   width: 40px;
@@ -245,6 +247,8 @@ body {
 }
 .data-table th, .data-table td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
 .data-table th.th-center, .data-table td.td-actions, .data-table td.td-center { text-align: center; }
+.data-table td.td-actions { vertical-align: middle; white-space: nowrap; }
+.data-table td.td-actions .btn { min-width: 100px; box-sizing: border-box; }
 .data-table th.th-filter { cursor: pointer; position: relative; }
 .data-table th.th-filter .filter-arrow { font-size: 0.7em; opacity: 0.7; }
 .th-filter-dropdown {
@@ -271,10 +275,20 @@ body {
   font-size: 0.9rem;
 }
 .th-filter-dropdown button:hover { background: var(--bg); }
-.data-table td.td-actions { vertical-align: middle; }
 .data-table th { font-weight: 600; color: var(--text-muted); cursor: pointer; user-select: none; }
 .data-table th:hover { color: var(--text); }
 .data-table tbody tr:hover { background: var(--bg); }
+
+/* Склад: ровные столбцы */
+.data-table-warehouse-oils { table-layout: fixed; }
+.data-table-warehouse-oils th:nth-child(1), .data-table-warehouse-oils td:nth-child(1) { width: 22%; }
+.data-table-warehouse-oils th:nth-child(2), .data-table-warehouse-oils td:nth-child(2) { width: 18%; }
+.data-table-warehouse-oils th:nth-child(3), .data-table-warehouse-oils td:nth-child(3) { width: 18%; }
+.data-table-warehouse-oils th:nth-child(4), .data-table-warehouse-oils td:nth-child(4) { width: 18%; }
+.data-table-warehouse-oils .th-actions-col, .data-table-warehouse-oils td.td-actions { width: 24%; }
+.data-table-warehouse-consumption { table-layout: fixed; }
+.data-table-warehouse-consumption th:first-child, .data-table-warehouse-consumption td:first-child { width: 25%; }
+.data-table-warehouse-consumption th:not(:first-child), .data-table-warehouse-consumption td:not(:first-child) { min-width: 64px; }
 .data-table input[type="number"], .data-table input[type="text"] {
   width: 100%;
   max-width: 120px;

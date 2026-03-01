@@ -1077,7 +1077,7 @@ async function loadWarehouseSection() {
     if (canvas && (remainder || []).length > 0) {
       const labels = remainder.map((r) => r.name || r.id);
       const values = remainder.map((r) => r.units_can_make != null ? r.units_can_make : 0);
-      const colors = values.map((v) => (v >= 20 ? 'rgba(234, 88, 12, 0.8)' : 'rgba(59, 130, 246, 0.6)'));
+      const colors = values.map((v) => (v >= 20 ? 'rgba(22, 163, 74, 0.8)' : 'rgba(59, 130, 246, 0.6)'));
       if (warehouseOilsChartInstance) warehouseOilsChartInstance.destroy();
       warehouseOilsChartInstance = new Chart(canvas, {
         type: 'bar',

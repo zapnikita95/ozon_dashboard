@@ -261,18 +261,25 @@
     <!-- Склад -->
     <section id="section-warehouse" class="section">
       <div class="table-block">
+        <h3>Остатки масел (на сколько единиц хватит)</h3>
+        <p class="hint">По каждому маслу: остаток в мл (объём в наличии минус расход на размещённые заказы). «Хватит на N шт» — минимум по всем артикулам, где это масло используется: для каждого артикула считается floor(остаток_мл / мл_на_1_шт), берётся наименьшее значение. Зелёным — запас ≥ 20 шт.</p>
+        <div class="chart-wrap chart-wrap-horizontal-bars" id="warehouse-oils-chart-wrap">
+          <canvas id="warehouse-oils-chart"></canvas>
+        </div>
+      </div>
+      <div class="table-block">
         <h3>Эфирные масла</h3>
         <p class="hint">Объём в наличии — сколько мл каждого масла на складе. Остаток считается по проданным/размещённым заказам и расходу по артикулам.</p>
         <button type="button" class="btn btn-primary btn-small" id="btn-add-oil">Добавить эфирное масло</button>
         <div class="table-wrap">
-          <table class="data-table" id="warehouse-oils-table">
+          <table class="data-table data-table-warehouse-oils" id="warehouse-oils-table">
             <thead>
               <tr>
                 <th>Название</th>
                 <th>Объём в наличии (мл)</th>
                 <th>Остаток (мл)</th>
                 <th>Хватит на (шт)</th>
-                <th class="th-center" style="width:100px"></th>
+                <th class="th-center th-actions-col"></th>
               </tr>
             </thead>
             <tbody id="warehouse-oils-tbody"></tbody>
@@ -283,35 +290,9 @@
         <h3>Расход масла по артикулу (мл на 1 шт)</h3>
         <p class="hint">Для каждого артикула укажите, сколько мл каждого эфирного масла нужно на изготовление одной единицы.</p>
         <div class="table-wrap" id="warehouse-oil-consumption-wrap">
-          <table class="data-table" id="warehouse-oil-consumption-table">
+          <table class="data-table data-table-warehouse-consumption" id="warehouse-oil-consumption-table">
             <thead><tr id="warehouse-oil-consumption-thead"></tr></thead>
             <tbody id="warehouse-oil-consumption-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="table-block">
-        <h3>Остатки масел (на сколько единиц хватит)</h3>
-        <p class="hint">Горизонтальная шкала: по каждому маслу — на сколько шт самого «узкого» артикула хватит остатка. Оранжевым — запас ≥ 20 шт.</p>
-        <div class="chart-wrap chart-wrap-horizontal-bars" id="warehouse-oils-chart-wrap">
-          <canvas id="warehouse-oils-chart"></canvas>
-        </div>
-      </div>
-      <div class="table-block">
-        <h3>Типы товаров (пресеты)</h3>
-        <button type="button" class="btn btn-primary btn-small" id="btn-add-preset-warehouse">Добавить тип товара</button>
-        <ul id="warehouse-preset-list" class="preset-list"></ul>
-      </div>
-      <div class="table-block">
-        <h3>Привязка товаров к типу</h3>
-        <div class="table-wrap">
-          <table class="data-table" id="warehouse-product-types-table">
-            <thead>
-              <tr>
-                <th>Товар</th>
-                <th>Тип (пресет)</th>
-              </tr>
-            </thead>
-            <tbody id="warehouse-product-types-tbody"></tbody>
           </table>
         </div>
       </div>
@@ -458,6 +439,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
