@@ -363,14 +363,17 @@ function bindSoldGoodsDeliveredFilter() {
 function buildChart(sales) {
   const byDay = {};
   sales.forEach((s) => {
-    const d = (s.date || s.operation_date || s.created_at || '').slice(0, 10);
-    if (!d) return;
-    if (!byDay[d]) byDay[d] = { date: d, received: 0, amount: 0, orders: 0, potential: 0 };
+    const dOp = (s.date || s.operation_date || s.created_at || '').slice(0, 10);
+    const dDel = (s.delivery_date || s.date || s.operation_date || s.created_at || '').slice(0, 10);
+    if (!dOp) return;
+    if (!byDay[dOp]) byDay[dOp] = { date: dOp, received: 0, amount: 0, orders: 0, potential: 0 };
+    if (dDel && !byDay[dDel]) byDay[dDel] = { date: dDel, received: 0, amount: 0, orders: 0, potential: 0 };
     const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
-    byDay[d].received += amt > 0 ? amt : 0;
-    byDay[d].amount += Number(s.amount ?? 0);
-    byDay[d].orders += 1;
-    byDay[d].potential += Number(s.potential_amount ?? 0);
+    byDay[dOp].amount += Number(s.amount ?? 0);
+    byDay[dOp].orders += 1;
+    byDay[dOp].potential += Number(s.potential_amount ?? 0);
+    if (dDel) byDay[dDel].received += amt > 0 ? amt : 0;
+    else byDay[dOp].received += amt > 0 ? amt : 0;
   });
   const labels = Object.keys(byDay).sort();
   const receivedData = labels.map((d) => byDay[d].received);
@@ -405,6 +408,21 @@ function buildChart(sales) {
   const maxY1 = Math.max(1, ...ordersBarsData);
   const minY1 = maxY1 * minY / rangeY;
 
+  // Равномерные отсечки: фиксированный шаг по обеим осям (пропорциональная шкала)
+  const moneyStep = (() => {
+    const rough = rangeY / 8 || 1;
+    const steps = [100, 250, 500, 1000, 2000, 5000, 10000];
+    let best = steps[0];
+    for (const s of steps) if (s >= rough) { best = s; break; }
+    return best;
+  })();
+  const yMin = Math.floor(minY / moneyStep) * moneyStep;
+  const yMax = Math.ceil(maxY / moneyStep) * moneyStep;
+
+  const piecesStep = maxY1 - minY1 <= 10 ? 1 : 2;
+  const y1Min = Math.floor(minY1 / piecesStep) * piecesStep;
+  const y1Max = Math.ceil(maxY1 / piecesStep) * piecesStep;
+
   if (chartInstance) chartInstance.destroy();
   const chartEl = document.getElementById('chart');
   if (!chartEl) return;
@@ -430,18 +448,20 @@ function buildChart(sales) {
       scales: {
         y: {
           position: 'left',
-          min: minY,
-          max: maxY,
+          min: yMin,
+          max: yMax,
           ticks: {
+            stepSize: moneyStep,
             callback: (v) => (typeof v === 'number' ? Math.round(v) : v) + ' ₽',
           },
         },
         y1: {
           position: 'right',
-          min: minY1,
-          max: maxY1,
+          min: y1Min,
+          max: y1Max,
           grid: { drawOnChartArea: false },
           ticks: {
+            stepSize: piecesStep,
             callback: (v) => (typeof v === 'number' ? Math.round(v) : v) + ' шт',
           },
         },

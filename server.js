@@ -200,6 +200,22 @@ app.get('/api/sales', (req, res) => {
   const toDateStr = (v) => (v != null ? String(v).slice(0, 10) : '');
   if (dateFrom) list = list.filter((s) => toDateStr(s.date || s.operation_date || s.created_at) >= dateFrom);
   if (dateTo) list = list.filter((s) => toDateStr(s.date || s.operation_date || s.created_at) <= dateTo);
+
+  // Для «Фактически получено» привязываем выплату к дате доставки постинга (как в ЛК Ozon — «Доставлено»)
+  const postings = readJson('postings.json', []);
+  const postingNumToDeliveryDate = new Map();
+  postings.forEach((p) => {
+    const num = p.posting_number || p.id;
+    const d = toDateStr(p.date || p.in_process_at || p.shipment_date || p.created_at);
+    if (num && d) postingNumToDeliveryDate.set(String(num), d);
+  });
+  list = list.map((s) => {
+    const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
+    const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
+    const delivery_date = pn && amt > 0 ? postingNumToDeliveryDate.get(String(pn)) ?? null : null;
+    return { ...s, delivery_date: delivery_date || undefined };
+  });
+
   res.json(list);
 });
 
