@@ -332,6 +332,25 @@ app.post('/api/sales/sync', async (req, res) => {
       }
     }
 
+    // Состав заказа (items) для расчёта остатков расходников: у транзакций из API часто нет items — подтягиваем из постинга
+    for (const s of arr) {
+      const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
+      if (!postingNumber || !String(postingNumber).includes('-')) continue;
+      if (Number(s.amount ?? 0) <= 0) continue;
+      if (Array.isArray(s.items) && s.items.length) continue;
+      try {
+        const detail = await ozon.getPostingByNumber(postingNumber);
+        const products = detail?.result?.products || [];
+        s.items = products.map((p) => ({
+          sku: p.product_id != null ? String(p.product_id) : (p.sku != null ? String(p.sku) : ''),
+          quantity: Number(p.quantity) || 1,
+          name: p.name,
+        })).filter((it) => it.sku !== '');
+      } catch (e) {
+        // не ломаем синк
+      }
+    }
+
     writeJson('sales.json', arr);
 
     try {
@@ -693,6 +712,7 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
   let expenseItems = readJson('expense_items.json', []);
   expenseItems = expenseItems.map((e) => normalizeExpenseItem({ ...e }));
   const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
+  const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
 
   const soldCountByPreset = {};
   sales
@@ -700,8 +720,8 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
     .forEach((s) => {
       (s.items || []).forEach((it) => {
         const sku = it.sku != null ? String(it.sku) : '';
-        const product = byProductId.get(sku);
-        const offerId = product?.offer_id != null ? String(product.offer_id) : '';
+        const product = byProductId.get(sku) || byOfferId.get(sku);
+        const offerId = product?.offer_id != null ? String(product.offer_id) : sku;
         const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
         if (!presetId) return;
         soldCountByPreset[presetId] = (soldCountByPreset[presetId] || 0) + (Number(it.quantity) || 1);

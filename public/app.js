@@ -703,11 +703,15 @@ async function loadCostsSection() {
 document.getElementById('btn-refresh-costs')?.addEventListener('click', async () => {
   const btn = document.getElementById('btn-refresh-costs');
   if (btn) btn.disabled = true;
-  showToast('Загрузка товаров с Ozon…');
+  showToast('Обновление продаж и товаров с Ozon…');
   try {
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const salesRes = await fetch(API + '/sales/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_from: from, date_to: to }) }).then((r) => r.json()).catch(() => ({}));
+    if (salesRes.ok) showToast('Продажи обновлены, загружаю товары…');
     const res = await fetch(API + '/products/sync', { method: 'POST' }).then((r) => r.json()).catch(() => ({}));
     if (res.ok) {
-      showToast('Загружено товаров: ' + (res.count ?? 0));
+      showToast('Готово. Товаров: ' + (res.count ?? 0) + (salesRes.ok ? ', продажи с составом заказов обновлены' : ''));
     } else {
       showToast(res.error || 'Ошибка загрузки', 'error');
     }
