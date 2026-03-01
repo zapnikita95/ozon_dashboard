@@ -10,9 +10,11 @@
 </head>
 <body>
   <header class="header">
-    <img src="logo.jpg" alt="Дом Нот" class="logo-img">
+    <div class="header-logo">
+      <img src="logo.jpg" alt="Дом Нот" class="logo-img">
+    </div>
   </header>
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar">
     <nav class="nav">
       <button type="button" class="nav-item active" data-section="sales">Продажи и доходы</button>
       <button type="button" class="nav-item" data-section="costs">Себестоимость</button>
@@ -240,6 +242,9 @@
       </div>
     </section>
   </main>
+
+  <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+  <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Открыть меню">☰</button>
 
   <div id="modal-expense" class="modal" hidden>
     <div class="modal-content">

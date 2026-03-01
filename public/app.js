@@ -29,7 +29,18 @@ document.querySelectorAll('.nav-item').forEach((btn) => {
     if (id === 'sales') loadSalesSection();
     if (id === 'costs') loadCostsSection();
     if (id === 'products') loadProductsSection();
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebar-overlay').classList.remove('open');
   });
+});
+
+document.getElementById('sidebar-toggle').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+});
+document.getElementById('sidebar-overlay').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('open');
 });
 
 document.querySelectorAll('.subnav-item').forEach((btn) => {

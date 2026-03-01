@@ -173,8 +173,9 @@ app.get('/api/sales', (req, res) => {
     ...s,
     actual_payout_rub: overrides[s.transaction_id ?? s.id] != null ? overrides[s.transaction_id ?? s.id] : s.amount,
   }));
-  if (dateFrom) list = list.filter((s) => (s.date || s.created_at || '').slice(0, 10) >= dateFrom);
-  if (dateTo) list = list.filter((s) => (s.date || s.created_at || '').slice(0, 10) <= dateTo);
+  const toDateStr = (v) => (v != null ? String(v).slice(0, 10) : '');
+  if (dateFrom) list = list.filter((s) => toDateStr(s.date || s.operation_date || s.created_at) >= dateFrom);
+  if (dateTo) list = list.filter((s) => toDateStr(s.date || s.operation_date || s.created_at) <= dateTo);
   res.json(list);
 });
 
@@ -216,7 +217,10 @@ app.post('/api/sales/sync', async (req, res) => {
         const ops = data.result?.operations || data.result?.transaction_list || data.transaction_list || [];
         ops.forEach((op) => {
           const id = String(op.id ?? op.operation_id ?? op.transaction_id ?? '');
-          if (id) byId.set(id, { ...op, transaction_id: id, date: op.date || op.created_at || op.last_activity_date });
+          if (!id) return;
+          const rawDate = op.operation_date ?? op.date ?? op.created_at ?? op.last_activity_date;
+          const dateStr = rawDate != null ? String(rawDate).slice(0, 10) : '';
+          byId.set(id, { ...op, transaction_id: id, date: dateStr || rawDate });
         });
         hasMore = ops.length === 100;
         page++;
@@ -246,13 +250,14 @@ app.get('/api/sales/export', (req, res) => {
   const dateTo = req.query.date_to;
   let list = sales.map((s) => ({
     id: s.transaction_id ?? s.id,
-    date: s.date || s.created_at,
+    date: s.date || s.operation_date || s.created_at,
     amount: s.amount,
     actual_payout_rub: overrides[s.transaction_id ?? s.id] ?? s.amount,
     ...s,
   }));
-  if (dateFrom) list = list.filter((s) => (s.date || '').slice(0, 10) >= dateFrom);
-  if (dateTo) list = list.filter((s) => (s.date || '').slice(0, 10) <= dateTo);
+  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+  if (dateFrom) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) >= dateFrom);
+  if (dateTo) list = list.filter((s) => toD(s.date || s.operation_date || s.created_at) <= dateTo);
   const XLSX = require('xlsx');
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(list);
@@ -452,10 +457,11 @@ app.get('/api/finance-summary', (req, res) => {
   const overrides = readJson('payout_overrides.json', {});
   const adSpend = readJson('ad_spend.json', { weekly_budget: 0, one_time: [] });
   const benchmarks = readJson('benchmarks.json', {});
+  const toDateStr = (v) => (v != null ? String(v).slice(0, 10) : '');
 
   let received = 0;
   const list = sales.filter((s) => {
-    const d = (s.date || s.created_at || '').slice(0, 10);
+    const d = toDateStr(s.date || s.operation_date || s.created_at);
     return d >= dateFrom && d <= dateTo;
   });
   list.forEach((s) => { received += Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0); });
