@@ -1,6 +1,4 @@
-const API = (typeof window !== 'undefined' && window.location && window.location.origin)
-  ? window.location.origin + '/api'
-  : '/api';
+const API = '/api';
 
 /** GET с обходом кэша браузера (актуальные данные после синка) */
 function apiGet(path) {
@@ -168,8 +166,8 @@ async function loadFinanceSummary() {
   const { date_from, date_to } = getPeriod();
   const q = new URLSearchParams({ date_from: date_from || '', date_to: date_to || '' });
   const res = await fetch(API + '/finance-summary?' + q);
-  if (!res.ok) throw new Error('API ' + res.status);
-  const r = await res.json().catch(() => ({}));
+  const r = res.ok ? (await res.json().catch(() => ({}))) : {};
+  if (!res.ok) showToast('Сводка не загрузилась (код ' + res.status + '). Проверьте сеть или нажмите «Обновить продажи».', 'error');
   const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
   set('card-total-gross', formatMoney(r.total_gross));
   set('card-received', formatMoney(r.received));
@@ -195,7 +193,7 @@ async function loadFinanceSummary() {
   if (barConsumables) barConsumables.style.width = consumablesPct + '%';
   } catch (e) {
     console.error('loadFinanceSummary error:', e);
-    showToast('Не удалось загрузить сводку. Проверьте сеть или нажмите «Обновить продажи».', 'error');
+    showToast('Не удалось загрузить сводку. Нажмите «Обновить продажи».', 'error');
   }
 }
 
@@ -971,7 +969,8 @@ async function loadWarehouseSection() {
             <button type="button" class="btn btn-small btn-secondary" data-oil-delete="${o.id}">Удалить</button>
           </td>
         </tr>
-      `).join('');
+      `;
+    }).join('');
       oilsTbody.querySelectorAll('[data-oil-delete]').forEach((btn) => {
         btn.addEventListener('click', async () => {
           if (!confirm('Удалить эфирное масло?')) return;
@@ -1060,7 +1059,8 @@ async function loadWarehouseSection() {
               </select>
             </td>
           </tr>
-        `).join('');
+        `;
+        }).join('');
         typesTbodyWh.querySelectorAll('select[data-key-wh]').forEach((sel) => {
           sel.addEventListener('change', async () => {
             const key = sel.dataset.keyWh;
