@@ -370,7 +370,8 @@ app.get('/api/sales/chart-data', (req, res) => {
       }
     }
     const potentialOp = Number(s.potential_amount ?? 0);
-    if (potentialOp > 0 && s.type !== 'returns') {
+    const isReturn = (s.type || '').toString().toLowerCase() === 'returns' || /возврат|return/.test(String(s.operation_type_name || s.operation_type || '').toLowerCase());
+    if (potentialOp > 0 && !isReturn) {
       const hasPn = pn && String(pn).includes('-');
       if (!hasPn || !potentialAlreadyFromSales.has(String(pn))) {
         byDay[dOp].potential += potentialOp;
@@ -400,6 +401,7 @@ app.get('/api/sales/chart-data', (req, res) => {
     if (paidPostingNumbers.has(String(num))) return;
     if (potentialAlreadyFromSales.has(String(num))) return;
     if (excludeStatusForPotential(p.status, p.substatus, p.cancellation)) return;
+    if (String(p.type || '').toLowerCase() === 'returns') return;
     const potential = Number(p.potential_amount ?? 0);
     if (potential <= 0) return;
     const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
@@ -458,6 +460,7 @@ app.get('/api/orders-in-delivery', (req, res) => {
     const sales = readJson('sales.json', []);
     const overrides = readJson('payout_overrides.json', {});
     const postings = readJson('postings.json', []);
+    if (!Array.isArray(postings) || postings.length === 0) return res.json({ count: null });
     const paid = new Set();
     sales.forEach((s) => {
       const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
@@ -477,13 +480,14 @@ app.get('/api/orders-in-delivery', (req, res) => {
       const num = p.posting_number || p.id;
       if (!num || !String(num).includes('-')) return;
       if (paid.has(String(num))) return;
-      if (exclude(p.status, p.substatus, p.cancellation)) return;
-      count++;
-    });
-    res.json({ count });
+    if (exclude(p.status, p.substatus, p.cancellation)) return;
+    if (String(p.type || '').toLowerCase() === 'returns') return;
+    count++;
+  });
+  res.json({ count });
   } catch (e) {
     console.error('orders-in-delivery:', e.message);
-    res.json({ count: 0 });
+    res.json({ count: null });
   }
 });
 

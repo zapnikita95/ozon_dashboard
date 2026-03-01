@@ -605,8 +605,8 @@ async function updateOrdersInDelivery() {
   try {
     const res = await fetch(API + '/orders-in-delivery?_=' + Date.now());
     const r = res.ok ? (await res.json().catch(() => ({}))) : {};
-    const n = r.count != null ? Number(r.count) : 0;
-    el.innerHTML = 'Заказов в доставке: <strong>' + (Number.isNaN(n) ? '—' : n) + '</strong>';
+    const n = r.count != null ? Number(r.count) : null;
+    el.innerHTML = 'Заказов в доставке: <strong>' + (n == null || Number.isNaN(n) ? '—' : n) + '</strong>';
   } catch (e) {
     el.innerHTML = 'Заказов в доставке: <strong>—</strong>';
   }

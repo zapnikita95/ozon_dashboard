@@ -67,11 +67,16 @@
         <div class="actions">
           <button type="button" class="btn btn-primary" id="btn-sync-sales">Обновить продажи</button>
           <button type="button" class="btn btn-secondary" id="btn-export-excel">Выгрузить в Excel</button>
-          <button type="button" class="btn btn-secondary" id="btn-export-data" title="Скачать sales и postings для переноса на прод">Скачать данные</button>
-          <button type="button" class="btn btn-secondary" id="btn-import-data" title="Загрузить ранее скачанный JSON на этот сервер">Загрузить данные</button>
-          <input type="text" id="prod-url" placeholder="URL прод (например https://ozondashboard-production.up.railway.app)" title="URL прод-сервера для кнопки «Отправить на прод»" style="max-width:280px">
-          <button type="button" class="btn btn-secondary" id="btn-push-to-prod" title="Отправить текущие данные на прод — график на проде будет как здесь">Отправить на прод</button>
-          <input type="file" id="input-import-data" accept=".json" hidden>
+          <details class="toolbar-data-transfer" id="toolbar-data-transfer">
+            <summary>Перенос данных на прод</summary>
+            <div class="toolbar-data-transfer-inner">
+              <button type="button" class="btn btn-small btn-secondary" id="btn-push-to-prod" title="Отправить текущие данные на прод">Отправить на прод</button>
+              <input type="text" id="prod-url" placeholder="URL прод" title="URL прод-сервера" style="max-width:220px">
+              <button type="button" class="btn btn-small btn-secondary" id="btn-export-data" title="Скачать JSON">Скачать</button>
+              <button type="button" class="btn btn-small btn-secondary" id="btn-import-data" title="Загрузить JSON на этот сервер">Загрузить</button>
+              <input type="file" id="input-import-data" accept=".json" hidden>
+            </div>
+          </details>
         </div>
       </div>
       <div class="chart-block">

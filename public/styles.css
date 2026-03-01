@@ -160,7 +160,10 @@ body {
   border-radius: 8px;
   font-size: 0.9rem;
 }
-.actions { display: flex; gap: 8px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.toolbar-data-transfer { margin-left: 0; }
+.toolbar-data-transfer summary { cursor: pointer; font-size: 0.9rem; color: var(--text-muted); }
+.toolbar-data-transfer-inner { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 
 .btn {
   padding: 10px 18px;
