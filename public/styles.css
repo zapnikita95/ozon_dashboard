@@ -179,6 +179,8 @@ body {
 
 .costs-toolbar { position: absolute; top: 16px; right: 24px; z-index: 5; }
 #section-costs { position: relative; padding-top: 48px; }
+#section-products { position: relative; padding-top: 48px; }
+.products-toolbar { position: absolute; top: 16px; right: 24px; z-index: 5; }
 .btn-refresh-costs {
   width: 40px;
   height: 40px;

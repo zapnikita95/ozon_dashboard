@@ -133,6 +133,29 @@ app.post('/api/stocks/plus10', async (req, res) => {
   }
 });
 
+app.post('/api/stocks/update', async (req, res) => {
+  try {
+    const items = req.body.items || req.body;
+    const list = Array.isArray(items) ? items : [items];
+    if (!list.length) return res.json({ ok: true, updated: 0 });
+    const warehouses = await ozon.getWarehouses();
+    const warehouseId = warehouses.result?.[0]?.warehouse_id;
+    if (!warehouseId) return res.status(400).json({ error: 'No warehouse_id' });
+    const stocks = list
+      .filter((x) => x.offer_id != null || x.product_id != null)
+      .map((x) => ({
+        offer_id: x.offer_id,
+        product_id: x.product_id,
+        stock: Number(x.stock) >= 0 ? Number(x.stock) : 0,
+        warehouse_id: warehouseId,
+      }));
+    if (stocks.length) await ozon.updateStocks(stocks.slice(0, 100));
+    res.json({ ok: true, updated: stocks.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ——— Prices ———
 app.get('/api/prices', async (req, res) => {
   try {
@@ -836,10 +859,33 @@ app.get('/api/finance-summary', (req, res) => {
   });
 });
 
-app.post('/api/description', (req, res) => {
-  const { text } = req.body;
-  const html = (text || '').replace(/\n/g, '<br>');
-  res.json({ ok: true, html });
+app.get('/api/product-description', async (req, res) => {
+  try {
+    const offerId = req.query.offer_id;
+    const productId = req.query.product_id;
+    const key = productId != null && productId !== '' ? Number(productId) : offerId;
+    if (key == null || key === '') return res.status(400).json({ error: 'offer_id or product_id required' });
+    const data = await ozon.getProductDescription(key);
+    let description = data.result?.description ?? data.description ?? '';
+    if (typeof description === 'string') description = description.replace(/<br\s*\/?>/gi, '\n');
+    res.json({ description });
+  } catch (e) {
+    console.error('product-description:', e.message);
+    res.status(500).json({ error: e.message, description: '' });
+  }
+});
+
+app.post('/api/description', async (req, res) => {
+  try {
+    const { offer_id: offerId, product_id: productId, text, html } = req.body;
+    const raw = (html != null && String(html).trim() !== '') ? String(html).trim() : (text || '');
+    const description = raw.replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
+    await ozon.updateProductDescription(offerId || productId, description);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('description update:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.listen(PORT, () => console.log(`Ozon Dashboard: http://localhost:${PORT}`));

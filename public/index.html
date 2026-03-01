@@ -253,13 +253,17 @@
 
     <!-- Товары -->
     <section id="section-products" class="section">
+      <div class="products-toolbar">
+        <button type="button" class="btn btn-refresh-costs" id="btn-refresh-products" title="Обновить товары и остатки с Ozon" aria-label="Обновить">↻</button>
+      </div>
       <div class="subnav">
         <button type="button" class="subnav-item active" data-tab="stocks">Остатки</button>
         <button type="button" class="subnav-item" data-tab="prices">Цены</button>
         <button type="button" class="subnav-item" data-tab="descriptions">Описания</button>
       </div>
       <div id="tab-stocks" class="tab-pane active">
-        <button type="button" class="btn btn-primary" id="btn-plus10">+10 к выбранным остаткам</button>
+        <button type="button" class="btn btn-primary" id="btn-plus10">+10 к выбранным (сверху текущего)</button>
+        <button type="button" class="btn btn-secondary" id="btn-save-stocks">Сохранить остатки на Ozon</button>
         <label class="btn btn-secondary" style="margin-left:8px">Загрузить из Excel <input type="file" accept=".xlsx,.xls" id="input-stock-file" hidden></label>
         <span id="stock-upload-status" class="status-msg" aria-live="polite"></span>
         <div class="table-wrap">
@@ -269,6 +273,7 @@
                 <th><input type="checkbox" id="stocks-select-all" aria-label="Выбрать все"></th>
                 <th>Товар</th>
                 <th data-sort="stock">Остаток</th>
+                <th>Новый остаток</th>
               </tr>
             </thead>
             <tbody id="stocks-tbody"></tbody>
@@ -291,6 +296,7 @@
         </div>
       </div>
       <div id="tab-descriptions" class="tab-pane">
+        <p class="hint">Пишите текст с обычными переносами строк (Enter). При сохранении они отправятся в Ozon как &lt;br&gt;. Можно вставить готовый HTML.</p>
         <div class="table-wrap">
           <table class="data-table" id="descriptions-table">
             <thead>
@@ -341,12 +347,13 @@
   <div id="modal-description" class="modal" hidden>
     <div class="modal-content">
       <h3>Описание товара</h3>
-      <p class="hint">Переносы строк сохранятся как переносы в карточке.</p>
-      <textarea id="description-text" rows="10"></textarea>
+      <p class="hint">Переносы строк (Enter) при сохранении превратятся в &lt;br&gt; в Ozon. Можно вставить HTML с картинками.</p>
+      <textarea id="description-text" rows="12" placeholder="Текст или HTML..."></textarea>
       <input type="hidden" id="description-offer-id">
+      <input type="hidden" id="description-product-id">
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
-        <button type="button" class="btn btn-primary" id="btn-save-description">Сохранить</button>
+        <button type="button" class="btn btn-primary" id="btn-save-description">Сохранить в Ozon</button>
       </div>
     </div>
   </div>

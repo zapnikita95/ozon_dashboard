@@ -710,6 +710,25 @@ async function loadProductsSection() {
   loadStocks();
 }
 
+document.getElementById('btn-refresh-products')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-refresh-products');
+  if (btn) btn.disabled = true;
+  showToast('Загрузка товаров и остатков с Ozon…');
+  try {
+    const res = await fetch(API + '/products/sync', { method: 'POST' }).then((r) => r.json()).catch(() => ({}));
+    if (res.ok) {
+      showToast('Загружено товаров: ' + (res.count ?? 0));
+    } else {
+      showToast(res.error || 'Ошибка загрузки', 'error');
+    }
+    loadStocks();
+    loadPrices();
+    loadDescriptions();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
 async function loadStocks() {
   const list = await fetch(API + '/stocks').then((r) => r.json()).catch(() => []);
   const productsRaw = await fetch(API + '/products').then((r) => r.json()).catch(() => []);
@@ -724,12 +743,36 @@ async function loadStocks() {
       <td><input type="checkbox" class="stock-cb" data-product-id="${s.product_id}" data-offer-id="${s.offer_id}"></td>
       <td>${name}</td>
       <td>${stock}</td>
+      <td><input type="number" min="0" class="stock-edit" data-product-id="${s.product_id}" data-offer-id="${s.offer_id}" value="${stock}" placeholder="${stock}" style="width:80px"></td>
     </tr>`;
   }).join('');
   document.getElementById('stocks-select-all')?.addEventListener('change', (e) => {
     tbody.querySelectorAll('.stock-cb').forEach((cb) => { cb.checked = e.target.checked; });
   });
 }
+
+document.getElementById('btn-save-stocks')?.addEventListener('click', async () => {
+  const items = [];
+  document.querySelectorAll('#stocks-tbody tr').forEach((tr) => {
+    const inp = tr.querySelector('.stock-edit');
+    if (!inp) return;
+    const stock = parseInt(inp.value, 10);
+    if (isNaN(stock) || stock < 0) return;
+    items.push({
+      offer_id: inp.dataset.offerId,
+      product_id: inp.dataset.productId,
+      stock,
+    });
+  });
+  if (!items.length) return;
+  const res = await fetch(API + '/stocks/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }) }).then((r) => r.json()).catch(() => ({}));
+  if (res.ok) {
+    showToast('Обновлено остатков: ' + (res.updated ?? 0));
+    loadStocks();
+  } else {
+    showToast(res.error || 'Ошибка', 'error');
+  }
+});
 
 document.getElementById('btn-plus10')?.addEventListener('click', async () => {
   const productIds = [];
@@ -738,8 +781,13 @@ document.getElementById('btn-plus10')?.addEventListener('click', async () => {
     if (cb.dataset.productId) productIds.push(cb.dataset.productId);
     if (cb.dataset.offerId) offerIds.push(cb.dataset.offerId);
   });
-  await fetch(API + '/stocks/plus10', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productIds, offerIds }) });
-  loadStocks();
+  const res = await fetch(API + '/stocks/plus10', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ productIds, offerIds }) }).then((r) => r.json()).catch(() => ({}));
+  if (res.ok) {
+    showToast('Добавлено +10 к выбранным (итого обновлено: ' + (res.updated ?? 0) + ')');
+    loadStocks();
+  } else {
+    showToast(res.error || 'Ошибка', 'error');
+  }
 });
 
 document.getElementById('input-stock-file')?.addEventListener('change', async (e) => {
@@ -794,27 +842,55 @@ async function loadDescriptions() {
   const productsRaw = await fetch(API + '/products').then((r) => r.json()).catch(() => []);
   const products = Array.isArray(productsRaw) ? productsRaw : [];
   const tbody = document.getElementById('descriptions-tbody');
+  if (!products.length) {
+    tbody.innerHTML = '<tr><td colspan="2" class="hint">Нажмите «Обновить» (↻) в углу, чтобы подтянуть товары с Ozon.</td></tr>';
+    return;
+  }
   tbody.innerHTML = products.map((p) => `
     <tr>
       <td>${p.name || p.offer_id}</td>
-      <td><button type="button" class="btn btn-small btn-secondary" data-offer="${p.offer_id}" data-product="${p.product_id}">Изменить описание</button></td>
+      <td><button type="button" class="btn btn-small btn-secondary btn-edit-desc" data-offer="${p.offer_id}" data-product="${p.product_id || ''}">Изменить описание</button></td>
     </tr>
   `).join('');
-  tbody.querySelectorAll('button').forEach((btn) => {
-    btn.addEventListener('click', () => {
+  tbody.querySelectorAll('.btn-edit-desc').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const offerId = btn.dataset.offer;
+      const productId = btn.dataset.product;
+      document.getElementById('description-offer-id').value = offerId || '';
+      document.getElementById('description-product-id').value = productId || '';
+      document.getElementById('description-text').value = 'Загрузка…';
       document.getElementById('modal-description').hidden = false;
-      document.getElementById('description-offer-id').value = btn.dataset.offer || btn.dataset.product;
-      document.getElementById('description-text').value = '';
+      try {
+        const q = new URLSearchParams(offerId ? { offer_id: offerId } : { product_id: productId });
+        const r = await fetch(API + '/product-description?' + q).then((x) => x.json()).catch(() => ({}));
+        document.getElementById('description-text').value = r.description ?? '';
+      } catch (e) {
+        document.getElementById('description-text').value = '';
+      }
     });
   });
 }
 
 document.getElementById('btn-save-description')?.addEventListener('click', async () => {
   const offerId = document.getElementById('description-offer-id')?.value;
-  const text = document.getElementById('description-text')?.value;
-  await fetch(API + '/description', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ offer_id: offerId, text }) });
-  const modal = document.getElementById('modal-description');
-  if (modal) modal.hidden = true;
+  const productId = document.getElementById('description-product-id')?.value;
+  const text = document.getElementById('description-text')?.value ?? '';
+  const key = offerId || productId;
+  if (!key) return;
+  const body = { offer_id: offerId || undefined, product_id: productId || undefined };
+  if (/<[a-z][\s\S]*>/i.test(text)) body.html = text;
+  else body.text = text;
+  try {
+    await fetch(API + '/description', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => r.json()).then((res) => { if (!res.ok && res.error) throw new Error(res.error); });
+    document.getElementById('modal-description').hidden = true;
+    showToast('Описание сохранено в Ozon');
+  } catch (e) {
+    showToast(e.message || 'Ошибка сохранения', 'error');
+  }
 });
 
 function formatMoney(v) {
