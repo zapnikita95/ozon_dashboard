@@ -230,8 +230,19 @@ async function loadSales() {
   if (dateTh) dateTh.classList.add('sort-desc');
   const { date_from, date_to } = getPeriod();
   const chartQ = new URLSearchParams({ date_from, date_to });
-  const chartData = await fetch(API + '/sales/chart-data?' + chartQ).then((r) => r.json()).catch(() => null);
-  buildChart(chartData || list);
+  let chartData = null;
+  try {
+    const res = await fetch(API + '/sales/chart-data?' + chartQ);
+    if (res.ok) chartData = await res.json();
+  } catch (e) {
+    console.warn('chart-data load failed:', e);
+  }
+  try {
+    buildChart(chartData && chartData.labels ? chartData : list);
+  } catch (e) {
+    console.error('buildChart error:', e);
+    buildChart(list);
+  }
   loadSalesGroupedView();
   loadSoldGoods();
   bindSoldGoodsDeliveredFilter();
@@ -361,14 +372,15 @@ function bindSoldGoodsDeliveredFilter() {
 }
 
 function buildChart(data) {
-  const isChartData = data && data.labels && Array.isArray(data.received);
+  const isChartData = data && data.labels && Array.isArray(data.labels) && Array.isArray(data.received);
   let labels, receivedData, amountData, ordersBarsData, potentialData;
   if (isChartData) {
-    labels = data.labels;
-    receivedData = data.received;
-    amountData = data.expenses;
-    ordersBarsData = (data.orders || []).map((n) => Math.max(0, n));
-    potentialData = data.potential || labels.map(() => 0);
+    labels = Array.isArray(data.labels) ? data.labels : [];
+    const n = labels.length;
+    receivedData = Array.isArray(data.received) && data.received.length === n ? data.received : labels.map(() => 0);
+    amountData = Array.isArray(data.expenses) && data.expenses.length === n ? data.expenses : labels.map(() => 0);
+    ordersBarsData = Array.isArray(data.orders) && data.orders.length === n ? data.orders.map((v) => Math.max(0, Number(v) || 0)) : labels.map(() => 0);
+    potentialData = Array.isArray(data.potential) && data.potential.length === n ? data.potential : labels.map(() => 0);
   } else {
     const sales = Array.isArray(data) ? data : [];
     const byDay = {};
