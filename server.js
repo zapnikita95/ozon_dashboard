@@ -287,12 +287,22 @@ app.get('/api/sales', (req, res) => {
 const NON_GOODS_OPERATION_TYPES = ['Оплата эквайринга', 'Прочие расходы', 'Эквайринг', 'Комиссия за приём платежа'];
 /** В «Фактически получено» — только операции, похожие на реальную выплату (выплата/перевод/зачисление), чтобы начисления не дублировали график. */
 const RECEIVED_OPERATION_MATCH = /выплата|перевод|зачисление|оплата заказа|доставлено/i;
-app.get('/api/sales/chart-data', (req, res) => {
+app.get('/api/sales/chart-data', async (req, res) => {
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
   const sales = readJson('sales.json', []);
   const overrides = readJson('payout_overrides.json', {});
-  const postings = readJson('postings.json', []);
+  let postings = readJson('postings.json', []);
+  if (!Array.isArray(postings) || postings.length === 0) {
+    try {
+      const toIso = (dateTo || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
+      const fromIso = (dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
+      postings = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
+    } catch (e) {
+      console.error('chart-data: fetch postings from Ozon:', e.message);
+    }
+    if (!Array.isArray(postings)) postings = [];
+  }
   const productTypes = readJson('product_types.json', {});
   const expensePerPreset = readJson('expense_per_preset.json', {});
   let expenseItems = readJson('expense_items.json', []);
@@ -433,18 +443,26 @@ app.get('/api/orders-in-delivery', async (req, res) => {
   try {
     const sales = readJson('sales.json', []);
     const overrides = readJson('payout_overrides.json', {});
-    let postings = readJson('postings.json', []);
-    if (!Array.isArray(postings) || postings.length === 0) {
-      try {
-        const toIso = new Date().toISOString().slice(0, 19) + 'Z';
-        const fromIso = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
-        postings = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
-      } catch (e) {
-        console.error('orders-in-delivery: fetch postings from Ozon:', e.message);
-        return res.json({ count: null, total_amount: null });
-      }
+    let postings = [];
+    try {
+      const toIso = new Date().toISOString().slice(0, 19) + 'Z';
+      const fromIso = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
+      postings = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
+    } catch (e) {
+      console.error('orders-in-delivery: fetch postings from Ozon:', e.message);
+      postings = readJson('postings.json', []);
     }
     if (!Array.isArray(postings) || postings.length === 0) return res.json({ count: null, total_amount: null });
+    const cached = readJson('postings.json', []);
+    const byNum = new Map((Array.isArray(cached) ? cached : []).map((p) => [String(p.posting_number || p.id), p]));
+    postings = postings.map((p) => {
+      const num = p.posting_number || p.id;
+      const rec = byNum.get(String(num));
+      if (rec && (rec.potential_amount != null || rec.sum != null)) {
+        return { ...p, potential_amount: p.potential_amount ?? rec.potential_amount ?? rec.sum };
+      }
+      return p;
+    });
     const paid = new Set();
     sales.forEach((s) => {
       const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
@@ -892,32 +910,43 @@ function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
     const num = p.posting_number || p.id;
     if (!num || !String(num).includes('-')) return;
     if (isReturnOrCancel(p)) return;
-    const prods = Array.isArray(p.products) && p.products.length ? p.products : null;
-    if (!prods) return;
     const dateStr = toDp(p.date || p.in_process_at || p.created_at);
     if (dateFrom && dateStr < dateFrom) return;
     if (dateTo && dateStr > dateTo) return;
     if (deliveredPostings.has(String(num))) return;
+    const prods = Array.isArray(p.products) && p.products.length ? p.products : null;
     let expected_cost = p.potential_amount != null ? Number(p.potential_amount) : null;
-    if (expected_cost == null) {
-      expected_cost = prods.reduce((sum, prod) => {
-        const price = Number(prod.price ?? prod.final_price ?? 0) || 0;
-        const q = Number(prod.quantity) || 1;
-        return sum + price * q;
-      }, 0);
-    }
-    prods.forEach((prod) => {
-      const sku = prod.sku != null ? String(prod.sku) : (prod.product_id != null ? String(prod.product_id) : (prod.offer_id != null ? String(prod.offer_id) : ''));
+    if (prods) {
+      if (expected_cost == null) {
+        expected_cost = prods.reduce((sum, prod) => {
+          const price = Number(prod.price ?? prod.final_price ?? 0) || 0;
+          const q = Number(prod.quantity) || 1;
+          return sum + price * q;
+        }, 0);
+      }
+      prods.forEach((prod) => {
+        const sku = prod.sku != null ? String(prod.sku) : (prod.product_id != null ? String(prod.product_id) : (prod.offer_id != null ? String(prod.offer_id) : ''));
+        result.push({
+          date: dateStr,
+          posting_number: num,
+          product_name: productName(prod) || '—',
+          sku: sku,
+          quantity: Number(prod.quantity) || 1,
+          expected_cost: expected_cost,
+          delivered: false,
+        });
+      });
+    } else {
       result.push({
         date: dateStr,
         posting_number: num,
-        product_name: productName(prod) || '—',
-        sku: sku,
-        quantity: Number(prod.quantity) || 1,
-        expected_cost: expected_cost,
+        product_name: '—',
+        sku: '—',
+        quantity: 1,
+        expected_cost: expected_cost != null ? expected_cost : 0,
         delivered: false,
       });
-    });
+    }
   });
 
   return result;
@@ -1010,11 +1039,21 @@ app.get('/api/sales/grouped', (req, res) => {
 });
 
 /** Список проданных товаров: дата, заказ, товар, sku, количество, ожидаемая стоимость, доставлено. Только реальные товары (не эквайринг и не прочие расходы). Данные из getSoldGoodsRows — тот же источник, что и график «Потенциальная прибыль». */
-app.get('/api/sales/sold-goods', (req, res) => {
+app.get('/api/sales/sold-goods', async (req, res) => {
   const sales = readJson('sales.json', []);
-  const postings = readJson('postings.json', []);
+  let postings = readJson('postings.json', []);
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
+  if (!Array.isArray(postings) || postings.length === 0) {
+    try {
+      const toIso = (dateTo || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
+      const fromIso = (dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
+      postings = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
+    } catch (e) {
+      console.error('sold-goods: fetch postings from Ozon:', e.message);
+    }
+    if (!Array.isArray(postings)) postings = [];
+  }
   const deliveredFilter = (req.query.delivered || 'all').toLowerCase();
   const result = getSoldGoodsRows(sales, postings, dateFrom, dateTo);
   let out = result;
