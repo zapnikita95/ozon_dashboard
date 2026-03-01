@@ -487,6 +487,36 @@ app.put('/api/sales/:id/payout', (req, res) => {
   res.json({ ok: true });
 });
 
+/** Подтянуть состав заказов (items) по всем продажам без items — для корректного расчёта остатков расходников. */
+app.post('/api/sales/enrich-items', async (req, res) => {
+  try {
+    const arr = readJson('sales.json', []);
+    let enriched = 0;
+    for (const s of arr) {
+      const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
+      if (!postingNumber || !String(postingNumber).includes('-')) continue;
+      if (Number(s.amount ?? 0) <= 0) continue;
+      if (Array.isArray(s.items) && s.items.length) continue;
+      try {
+        const detail = await ozon.getPostingByNumber(postingNumber);
+        const products = detail?.result?.products || [];
+        s.items = products.map((p) => {
+          const sku = p.product_id != null ? String(p.product_id) : (p.offer_id != null ? String(p.offer_id) : (p.sku != null ? String(p.sku) : ''));
+          return { sku, quantity: Number(p.quantity) || 1, name: p.name };
+        }).filter((it) => it.sku !== '');
+        if (s.items.length) enriched++;
+      } catch (e) {
+        // один сбой по одному постингу не ломаем
+      }
+    }
+    writeJson('sales.json', arr);
+    res.json({ ok: true, enriched });
+  } catch (e) {
+    console.error('sales/enrich-items error:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/api/sales/export', (req, res) => {
   const sales = readJson('sales.json', []);
   const overrides = readJson('payout_overrides.json', {});

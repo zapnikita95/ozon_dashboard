@@ -756,6 +756,23 @@ document.getElementById('btn-refresh-costs')?.addEventListener('click', async ()
   loadCostsSection();
 });
 
+document.getElementById('btn-refresh-remainders')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-refresh-remainders');
+  if (btn) btn.disabled = true;
+  showToast('Подтягиваю состав заказов из Ozon…');
+  try {
+    const res = await fetch(API + '/sales/enrich-items', { method: 'POST', headers: { 'Content-Type': 'application/json' } }).then((r) => r.json()).catch((e) => ({ ok: false, error: e.message }));
+    if (res.ok) {
+      showToast('Готово. Обновлено заказов: ' + (res.enriched ?? 0) + '. Остатки пересчитаны.');
+      loadCostsSection();
+    } else {
+      showToast(res.error || 'Ошибка', 'error');
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
 // ——— Expense modal ———
 document.getElementById('btn-add-expense')?.addEventListener('click', () => {
   const modal = document.getElementById('modal-expense');
