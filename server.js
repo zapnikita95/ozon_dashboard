@@ -335,6 +335,28 @@ app.get('/api/sales/chart-data', (req, res) => {
     byDay[dOp].potential += Number(s.potential_amount ?? 0);
   });
 
+  // Потенциальная прибыль по заказам из postings: заказы, по которым ещё не поступила оплата в sales
+  const paidPostingNumbers = new Set();
+  list.forEach((s) => {
+    const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
+    if (amt <= 0) return;
+    const pn = s.posting?.posting_number || s.posting?.number || s.posting_number;
+    if (pn && String(pn).includes('-')) paidPostingNumbers.add(String(pn));
+  });
+  postings.forEach((p) => {
+    const num = p.posting_number || p.id;
+    if (!num || !String(num).includes('-')) return;
+    if (paidPostingNumbers.has(String(num))) return;
+    const potential = Number(p.potential_amount ?? 0);
+    if (potential <= 0) return;
+    const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
+    if (!d) return;
+    if (dateFrom && d < dateFrom) return;
+    if (dateTo && d > dateTo) return;
+    if (!byDay[d]) byDay[d] = { received: 0, ozon_expenses: 0, consumables: 0, orderPostings: new Set(), potential: 0 };
+    byDay[d].potential += potential;
+  });
+
   const orderCountByDay = {};
   postings.forEach((p) => {
     const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
@@ -354,6 +376,27 @@ app.get('/api/sales/chart-data', (req, res) => {
     orders: labels.map((d) => orderCountByDay[d] || 0),
     potential: labels.map((d) => (byDay[d] && byDay[d].potential) || 0),
   });
+});
+
+/** Для проверки: детали отправления и рассчитанная сумма (potential). Пример: GET /api/posting/77031757-0172-1 */
+app.get('/api/posting/:postingNumber', async (req, res) => {
+  try {
+    const postingNumber = req.params.postingNumber?.trim();
+    if (!postingNumber) return res.status(400).json({ error: 'posting_number required' });
+    const detail = await ozon.getPostingByNumber(postingNumber);
+    if (!detail) return res.status(404).json({ error: 'Posting not found' });
+    res.json({
+      posting_number: postingNumber,
+      sum: detail.sum,
+      potential_amount: detail.sum,
+      products_count: (detail.products || []).length,
+      result_keys: detail.result ? Object.keys(detail.result) : [],
+      sample_product: detail.products?.[0] ? { ...detail.products[0], _keys: Object.keys(detail.products[0]) } : null,
+    });
+  } catch (e) {
+    console.error('api/posting:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/postings', async (req, res) => {
@@ -486,13 +529,16 @@ app.post('/api/sales/sync', async (req, res) => {
 
     const arr = Array.from(byId.values());
 
-    // Потенциальная сумма по недоставленным заказам (ожидание) — из деталей постинга
+    // Потенциальная сумма по недоставленным заказам — из деталей постинга (тип «Заказ (ожидание)» или любой заказ без оплаты)
     const awaitingType = 'Заказ (ожидание)';
     for (const s of arr) {
-      const typeName = (s.operation_type_name || s.type || '').trim();
-      if (typeName !== awaitingType) continue;
       const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
       if (!postingNumber || !String(postingNumber).includes('-')) continue;
+      const typeName = (s.operation_type_name || s.type || '').trim();
+      const isAwaiting = typeName === awaitingType;
+      const noPayment = Number(s.amount ?? 0) <= 0;
+      const needPotential = (isAwaiting || noPayment) && (s.potential_amount == null || Number(s.potential_amount) <= 0);
+      if (!needPotential) continue;
       try {
         const detail = await ozon.getPostingByNumber(postingNumber);
         if (detail && Number(detail.sum) > 0) s.potential_amount = detail.sum;
