@@ -1,5 +1,11 @@
 const API = '/api';
 
+/** GET с обходом кэша браузера (актуальные данные после синка) */
+function apiGet(path) {
+  const sep = path.includes('?') ? '&' : '?';
+  return fetch(API + path + sep + '_=' + Date.now()).then((r) => r.json());
+}
+
 const DASHBOARD_STATE_KEY = 'ozon_dashboard_state';
 const SECTION_KEY = 'ozon_dashboard_section';
 const TAB_KEY = 'ozon_dashboard_tab';
@@ -553,8 +559,8 @@ document.getElementById('btn-export-excel')?.addEventListener('click', () => {
 // ——— Costs section ———
 async function loadCostsSection() {
   try {
-  const expenses = await fetch(API + '/expense-items').then((x) => x.json()).catch(() => []);
-  const remainderList = await fetch(API + '/costs/consumables-remainder').then((x) => x.json()).catch(() => []);
+  const expenses = await apiGet('/expense-items').catch(() => []);
+  const remainderList = await apiGet('/costs/consumables-remainder').catch(() => []);
   const remainderById = new Map((remainderList || []).map((r) => [r.id, r]));
 
   const starred = expenses.filter((e) => e.starred);
@@ -576,7 +582,7 @@ async function loadCostsSection() {
     }
   }
 
-  const byPreset = await fetch(API + '/costs/by-preset').then((x) => x.json()).catch(() => []);
+  const byPreset = await apiGet('/costs/by-preset').catch(() => []);
   const cardsEl = document.getElementById('preset-cards');
   if (cardsEl) {
   cardsEl.innerHTML = byPreset.map((p) => `
@@ -588,7 +594,7 @@ async function loadCostsSection() {
   `).join('');
   }
 
-  const presets = await fetch(API + '/product-type-presets').then((x) => x.json()).catch(() => []);
+  const presets = await apiGet('/product-type-presets').catch(() => []);
   const presetListEl = document.getElementById('preset-list');
   if (presetListEl) {
   presetListEl.innerHTML = presets.map((p) => `<li><span class="preset-name">${p.name}</span> <button type="button" class="btn btn-small btn-secondary" data-delete-preset="${p.id}">Удалить</button></li>`).join('');
@@ -658,7 +664,7 @@ async function loadCostsSection() {
     });
   });
 
-  const expensePerPreset = await fetch(API + '/expense-per-preset').then((x) => x.json()).catch(() => ({}));
+  const expensePerPreset = await apiGet('/expense-per-preset').catch(() => ({}));
   const table = document.getElementById('expense-per-preset-table');
   const thead = table?.querySelector('thead');
   const matrixTbody = document.getElementById('expense-per-preset-tbody');
@@ -680,8 +686,8 @@ async function loadCostsSection() {
   });
   }
 
-  const types = await fetch(API + '/product-types').then((x) => x.json()).catch(() => ({}));
-  const productsForTypes = await fetch(API + '/costs/products').then((x) => x.json()).catch(() => []);
+  const types = await apiGet('/product-types').catch(() => ({}));
+  const productsForTypes = await apiGet('/costs/products').catch(() => []);
   const costProducts = Array.isArray(productsForTypes) ? productsForTypes : [];
   const typesTbody = document.getElementById('product-types-tbody');
   if (typesTbody) {
@@ -747,13 +753,14 @@ document.getElementById('btn-refresh-costs')?.addEventListener('click', async ()
     const res = await fetch(API + '/products/sync', { method: 'POST' }).then((r) => r.json()).catch(() => ({}));
     if (res.ok) {
       showToast('Готово. Товаров: ' + (res.count ?? 0) + (salesRes.ok ? ', продажи с составом заказов обновлены' : ''));
+      await loadCostsSection();
+      showToast('Себестоимость и остатки обновлены.');
     } else {
       showToast(res.error || 'Ошибка загрузки', 'error');
     }
   } finally {
     if (btn) btn.disabled = false;
   }
-  loadCostsSection();
 });
 
 document.getElementById('btn-refresh-remainders')?.addEventListener('click', async () => {
@@ -849,21 +856,20 @@ document.getElementById('btn-refresh-products')?.addEventListener('click', async
   try {
     const res = await fetch(API + '/products/sync', { method: 'POST' }).then((r) => r.json()).catch(() => ({}));
     if (res.ok) {
-      showToast('Загружено товаров: ' + (res.count ?? 0));
+      showToast('Загружено товаров: ' + (res.count ?? 0) + '. Обновляю таблицы…');
+      await Promise.all([loadStocks(), loadPrices(), loadDescriptions()]);
+      showToast('Остатки и цены обновлены.');
     } else {
       showToast(res.error || 'Ошибка загрузки', 'error');
     }
-    loadStocks();
-    loadPrices();
-    loadDescriptions();
   } finally {
     if (btn) btn.disabled = false;
   }
 });
 
 async function loadStocks() {
-  const list = await fetch(API + '/stocks').then((r) => r.json()).catch(() => []);
-  const productsRaw = await fetch(API + '/products').then((r) => r.json()).catch(() => []);
+  const list = await apiGet('/stocks').catch(() => []);
+  const productsRaw = await apiGet('/products').catch(() => []);
   const products = Array.isArray(productsRaw) ? productsRaw : [];
   const byOffer = new Map(products.map((p) => [p.offer_id, p]));
   const tbody = document.getElementById('stocks-tbody');
@@ -943,8 +949,8 @@ document.getElementById('input-stock-file')?.addEventListener('change', async (e
 });
 
 async function loadPrices() {
-  const prices = await fetch(API + '/prices').then((r) => r.json()).catch(() => []);
-  const productsRaw = await fetch(API + '/products').then((r) => r.json()).catch(() => []);
+  const prices = await apiGet('/prices').catch(() => []);
+  const productsRaw = await apiGet('/products').catch(() => []);
   const products = Array.isArray(productsRaw) ? productsRaw : [];
   const byOffer = new Map(products.map((p) => [p.offer_id, p]));
   const tbody = document.getElementById('prices-tbody');
@@ -971,7 +977,7 @@ document.getElementById('btn-save-prices')?.addEventListener('click', async () =
 });
 
 async function loadDescriptions() {
-  const productsRaw = await fetch(API + '/products').then((r) => r.json()).catch(() => []);
+  const productsRaw = await apiGet('/products').catch(() => []);
   const products = Array.isArray(productsRaw) ? productsRaw : [];
   const tbody = document.getElementById('descriptions-tbody');
   if (!products.length) {
