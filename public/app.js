@@ -127,6 +127,7 @@ document.querySelectorAll('.nav-item').forEach((btn) => {
     if (section) section.classList.add('active');
     if (id === 'sales') loadSalesSection();
     if (id === 'costs') loadCostsSection();
+    if (id === 'warehouse') loadWarehouseSection();
     if (id === 'products') loadProductsSection();
     document.getElementById('sidebar')?.classList.remove('open');
     document.getElementById('sidebar-overlay')?.classList.remove('open');
@@ -606,7 +607,10 @@ async function updateOrdersInDelivery() {
     const res = await fetch(API + '/orders-in-delivery?_=' + Date.now());
     const r = res.ok ? (await res.json().catch(() => ({}))) : {};
     const n = r.count != null ? Number(r.count) : null;
-    el.innerHTML = 'Заказов в доставке: <strong>' + (n == null || Number.isNaN(n) ? '—' : n) + '</strong>';
+    const amount = r.total_amount != null ? Number(r.total_amount) : null;
+    const countStr = n == null || Number.isNaN(n) ? '—' : String(n);
+    const amountStr = amount != null && !Number.isNaN(amount) ? ' · на сумму ' + formatMoney(amount) : '';
+    el.innerHTML = 'Заказов в доставке: <strong>' + countStr + '</strong>' + amountStr;
   } catch (e) {
     el.innerHTML = 'Заказов в доставке: <strong>—</strong>';
   }
@@ -913,6 +917,10 @@ document.getElementById('btn-add-preset')?.addEventListener('click', () => {
   const modal = document.getElementById('modal-preset');
   if (modal) { modal.hidden = false; document.getElementById('form-preset')?.reset(); document.querySelector('#form-preset input[name="name"]')?.focus(); }
 });
+document.getElementById('btn-add-preset-warehouse')?.addEventListener('click', () => {
+  const modal = document.getElementById('modal-preset');
+  if (modal) { modal.hidden = false; document.getElementById('form-preset')?.reset(); document.querySelector('#form-preset input[name="name"]')?.focus(); }
+});
 
 document.getElementById('form-preset')?.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -922,6 +930,199 @@ document.getElementById('form-preset')?.addEventListener('submit', async (e) => 
   const modal = document.getElementById('modal-preset');
   if (modal) modal.hidden = true;
   loadCostsSection();
+  loadWarehouseSection();
+});
+
+// ——— Warehouse section ———
+let warehouseOilsChartInstance = null;
+
+async function loadWarehouseSection() {
+  try {
+    const [oils, remainder, consumption, presets, productTypes, products] = await Promise.all([
+      apiGet('/warehouse/essential-oils').catch(() => []),
+      apiGet('/warehouse/oils-remainder').catch(() => []),
+      apiGet('/warehouse/oil-consumption').catch(() => ({})),
+      apiGet('/product-type-presets').catch(() => []),
+      apiGet('/product-types').catch(() => ({})),
+      apiGet('/costs/products').catch(() => []),
+    ]);
+    const remainderById = new Map((remainder || []).map((r) => [r.id, r]));
+
+    const oilsTbody = document.getElementById('warehouse-oils-tbody');
+    if (oilsTbody) {
+      oilsTbody.innerHTML = (oils || []).map((o) => {
+        const r = remainderById.get(o.id);
+        const rem = r ? r.remaining : (o.volume_ml != null ? o.volume_ml : '—');
+        const units = r && r.units_can_make != null ? r.units_can_make : '—';
+        return `
+        <tr>
+          <td>${o.name || '—'}</td>
+          <td>${o.volume_ml != null ? o.volume_ml : '—'}</td>
+          <td>${rem}</td>
+          <td>${units}</td>
+          <td class="td-actions">
+            <button type="button" class="btn btn-small btn-secondary" data-oil-edit="${o.id}" data-oil-name="${(o.name || '').replace(/"/g, '&quot;')}" data-oil-volume="${o.volume_ml}">Изменить</button>
+            <button type="button" class="btn btn-small btn-secondary" data-oil-delete="${o.id}">Удалить</button>
+          </td>
+        </tr>
+      `).join('');
+      oilsTbody.querySelectorAll('[data-oil-delete]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Удалить эфирное масло?')) return;
+          await fetch(API + '/warehouse/essential-oils/' + btn.dataset.oilDelete, { method: 'DELETE' });
+          loadWarehouseSection();
+        });
+      });
+      oilsTbody.querySelectorAll('[data-oil-edit]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = btn.dataset.oilEdit;
+          const name = btn.dataset.oilName || '';
+          const volume = btn.dataset.oilVolume ?? '';
+          const form = document.getElementById('form-oil');
+          const modal = document.getElementById('modal-oil');
+          if (!form || !modal) return;
+          modal.dataset.editId = id;
+          form.name.value = name;
+          form.volume_ml.value = volume;
+          modal.querySelector('h3').textContent = 'Изменить эфирное масло';
+          modal.hidden = false;
+        });
+      });
+    }
+
+    const theadConsumption = document.getElementById('warehouse-oil-consumption-thead');
+    const tbodyConsumption = document.getElementById('warehouse-oil-consumption-tbody');
+    if (theadConsumption && tbodyConsumption) {
+      if (!(oils || []).length) {
+        theadConsumption.innerHTML = '<th>Товар</th><th class="hint">Добавьте эфирные масла в блоке выше</th>';
+        tbodyConsumption.innerHTML = '';
+      } else if (Array.isArray(products) && products.length) {
+        theadConsumption.innerHTML = '<th>Товар</th>' + (oils || []).map((o) => `<th>${o.name} (мл)</th>`).join('');
+        tbodyConsumption.innerHTML = products.map((p) => {
+          const key = p.offer_id || String(p.product_id || '');
+          const name = p.name || p.offer_id || p.product_id || '—';
+          const cells = (oils || []).map((o) => {
+            const val = (consumption[key] || {})[o.id] ?? '';
+            return `<td><input type="number" min="0" step="0.1" data-offer="${key}" data-oil="${o.id}" value="${val}" style="width:64px" placeholder="0"></td>`;
+          }).join('');
+          return `<tr><td>${name}</td>${cells}</tr>`;
+        }).join('');
+        tbodyConsumption.querySelectorAll('input').forEach((inp) => {
+          inp.addEventListener('change', async () => {
+            await fetch(API + '/warehouse/oil-consumption', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ offer_id: inp.dataset.offer, oil_id: inp.dataset.oil, ml_per_unit: parseFloat(inp.value) || 0 }),
+            });
+            loadWarehouseSection();
+          });
+        });
+      } else {
+        theadConsumption.innerHTML = '<th>Товар</th><th colspan="' + (oils || []).length + '" class="hint">Загрузите товары в разделе Себестоимость (↻)</th>';
+        tbodyConsumption.innerHTML = '';
+      }
+    }
+
+    const presetListWh = document.getElementById('warehouse-preset-list');
+    if (presetListWh) {
+      presetListWh.innerHTML = (presets || []).map((p) => `<li><span class="preset-name">${p.name}</span> <button type="button" class="btn btn-small btn-secondary" data-delete-preset-wh="${p.id}">Удалить</button></li>`).join('');
+      presetListWh.querySelectorAll('[data-delete-preset-wh]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          await fetch(API + '/product-type-presets/' + btn.dataset.deletePresetWh, { method: 'DELETE' });
+          loadCostsSection();
+          loadWarehouseSection();
+        });
+      });
+    }
+
+    const typesTbodyWh = document.getElementById('warehouse-product-types-tbody');
+    if (typesTbodyWh) {
+      if (!(products || []).length) {
+        typesTbodyWh.innerHTML = '<tr><td colspan="2" class="hint">Нажмите «Обновить» (↻) в разделе Себестоимость, чтобы подтянуть товары.</td></tr>';
+      } else {
+        typesTbodyWh.innerHTML = products.map((i) => {
+          const key = i.offer_id || String(i.product_id || '');
+          const current = productTypes[i.offer_id] ?? productTypes[key];
+          const name = i.name || i.offer_id || i.product_id || '—';
+          return `
+          <tr>
+            <td>${name}</td>
+            <td>
+              <select data-key-wh="${key}">
+                <option value="">—</option>
+                ${(presets || []).map((p) => `<option value="${p.id}" ${current === p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+              </select>
+            </td>
+          </tr>
+        `).join('');
+        typesTbodyWh.querySelectorAll('select[data-key-wh]').forEach((sel) => {
+          sel.addEventListener('change', async () => {
+            const key = sel.dataset.keyWh;
+            if (!key) return;
+            await fetch(API + '/product-types', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: sel.value || undefined }) });
+            loadCostsSection();
+            loadWarehouseSection();
+          });
+        });
+      }
+    }
+
+    const canvas = document.getElementById('warehouse-oils-chart');
+    if (canvas && (remainder || []).length > 0) {
+      const labels = remainder.map((r) => r.name || r.id);
+      const values = remainder.map((r) => r.units_can_make != null ? r.units_can_make : 0);
+      const colors = values.map((v) => (v >= 20 ? 'rgba(234, 88, 12, 0.8)' : 'rgba(59, 130, 246, 0.6)'));
+      if (warehouseOilsChartInstance) warehouseOilsChartInstance.destroy();
+      warehouseOilsChartInstance = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{ label: 'Хватит на (шт)', data: values, backgroundColor: colors }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: true,
+          scales: {
+            x: { beginAtZero: true, title: { display: true, text: 'шт' } },
+          },
+          plugins: { legend: { display: false } },
+        },
+      });
+    } else if (canvas && warehouseOilsChartInstance) {
+      warehouseOilsChartInstance.destroy();
+      warehouseOilsChartInstance = null;
+    }
+  } catch (err) {
+    console.error('loadWarehouseSection error:', err);
+  }
+}
+
+document.getElementById('btn-add-oil')?.addEventListener('click', () => {
+  const form = document.getElementById('form-oil');
+  const modal = document.getElementById('modal-oil');
+  if (form && modal) {
+    delete modal.dataset.editId;
+    modal.querySelector('h3').textContent = 'Добавить эфирное масло';
+    form.reset();
+    modal.hidden = false;
+  }
+});
+
+document.getElementById('form-oil')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const name = (form.name && form.name.value || '').trim();
+  const volume_ml = parseFloat(form.volume_ml && form.volume_ml.value) || 0;
+  const modal = document.getElementById('modal-oil');
+  const editId = modal && modal.dataset.editId;
+  if (editId) {
+    await fetch(API + '/warehouse/essential-oils/' + editId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, volume_ml }) });
+  } else {
+    await fetch(API + '/warehouse/essential-oils', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, volume_ml }) });
+  }
+  if (modal) modal.hidden = true;
+  loadWarehouseSection();
 });
 
 // ——— Products section ———
@@ -1159,6 +1360,7 @@ function runInit() {
       sectionPanel.classList.add('active');
       if (savedSection === 'sales') loadSalesSection();
       else if (savedSection === 'costs') loadCostsSection();
+      else if (savedSection === 'warehouse') loadWarehouseSection();
       else if (savedSection === 'products') {
         loadProductsSection();
         const savedTab = localStorage.getItem(TAB_KEY) || 'stocks';

@@ -423,12 +423,22 @@ app.get('/api/posting/:postingNumber', async (req, res) => {
 });
 
 /** Количество заказов в доставке (ещё не получена оплата, не отменён, не возврат). */
-app.get('/api/orders-in-delivery', (req, res) => {
+app.get('/api/orders-in-delivery', async (req, res) => {
   try {
     const sales = readJson('sales.json', []);
     const overrides = readJson('payout_overrides.json', {});
-    const postings = readJson('postings.json', []);
-    if (!Array.isArray(postings) || postings.length === 0) return res.json({ count: null });
+    let postings = readJson('postings.json', []);
+    if (!Array.isArray(postings) || postings.length === 0) {
+      try {
+        const toIso = new Date().toISOString().slice(0, 19) + 'Z';
+        const fromIso = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
+        postings = await ozon.getPostingsList({ in_process_at_from: fromIso, in_process_at_to: toIso });
+      } catch (e) {
+        console.error('orders-in-delivery: fetch postings from Ozon:', e.message);
+        return res.json({ count: null, total_amount: null });
+      }
+    }
+    if (!Array.isArray(postings) || postings.length === 0) return res.json({ count: null, total_amount: null });
     const paid = new Set();
     sales.forEach((s) => {
       const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
@@ -443,19 +453,26 @@ app.get('/api/orders-in-delivery', (req, res) => {
       if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
       return false;
     };
+    const postingAmount = (p) => {
+      if (p.potential_amount != null && Number(p.potential_amount) > 0) return Number(p.potential_amount);
+      const prods = Array.isArray(p.products) ? p.products : [];
+      return prods.reduce((sum, pr) => sum + (Number(pr.price ?? pr.final_price ?? pr.sum_price ?? 0) || 0), 0);
+    };
     let count = 0;
+    let total_amount = 0;
     postings.forEach((p) => {
       const num = p.posting_number || p.id;
       if (!num || !String(num).includes('-')) return;
       if (paid.has(String(num))) return;
-    if (exclude(p.status, p.substatus, p.cancellation)) return;
-    if (String(p.type || '').toLowerCase() === 'returns') return;
-    count++;
-  });
-  res.json({ count });
+      if (exclude(p.status, p.substatus, p.cancellation)) return;
+      if (String(p.type || '').toLowerCase() === 'returns') return;
+      count++;
+      total_amount += postingAmount(p);
+    });
+    res.json({ count, total_amount: Math.round(total_amount * 100) / 100 });
   } catch (e) {
     console.error('orders-in-delivery:', e.message);
-    res.json({ count: null });
+    res.json({ count: null, total_amount: null });
   }
 });
 
@@ -806,6 +823,7 @@ function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
     if (!isOrderPosting(posting_number)) return false;
     const typeName = (s.operation_type_name || s.type || '').trim();
     if (NON_GOODS_OPERATION_TYPES.some((t) => typeName.includes(t))) return false;
+    if (/возврат|return/i.test(typeName)) return false;
     return true;
   });
 
@@ -856,9 +874,18 @@ function getSoldGoodsRows(sales, postings, dateFrom, dateTo) {
   });
 
   const toDp = (v) => (v != null ? String(v).slice(0, 10) : '');
+  const isReturnOrCancel = (p) => {
+    if (p.cancellation != null && typeof p.cancellation === 'object') return true;
+    const s = String(p.status || '').toLowerCase();
+    const sub = String(p.substatus || '').toLowerCase();
+    if (/cancel|отмен|return|возврат|arbitration|арбитраж/.test(s) || /cancel|отмен|return|возврат|arbitration/.test(sub)) return true;
+    if (String(p.type || '').toLowerCase() === 'returns') return true;
+    return false;
+  };
   postings.forEach((p) => {
     const num = p.posting_number || p.id;
     if (!num || !String(num).includes('-')) return;
+    if (isReturnOrCancel(p)) return;
     const prods = Array.isArray(p.products) && p.products.length ? p.products : null;
     if (!prods) return;
     const dateStr = toDp(p.date || p.in_process_at || p.created_at);
@@ -1125,6 +1152,126 @@ app.post('/api/product-types', (req, res) => {
   Object.assign(data, req.body);
   writeJson('product_types.json', data);
   res.json(data);
+});
+
+// ——— Warehouse: эфирные масла и расход по артикулам ———
+function readEssentialOils() {
+  const raw = readJson('essential_oils.json', []);
+  return Array.isArray(raw) ? raw : [];
+}
+function readOilConsumption() {
+  const raw = readJson('oil_consumption.json', {});
+  return raw && typeof raw === 'object' ? raw : {};
+}
+
+app.get('/api/warehouse/essential-oils', (req, res) => {
+  res.json(readEssentialOils());
+});
+
+app.post('/api/warehouse/essential-oils', (req, res) => {
+  const data = readEssentialOils();
+  const body = req.body || {};
+  const item = {
+    id: String(Date.now()),
+    name: String(body.name || '').trim() || 'Масло',
+    volume_ml: Math.max(0, Number(body.volume_ml) || 0),
+  };
+  data.push(item);
+  writeJson('essential_oils.json', data);
+  res.json(item);
+});
+
+app.put('/api/warehouse/essential-oils/:id', (req, res) => {
+  const data = readEssentialOils();
+  const id = req.params.id;
+  const idx = data.findIndex((o) => o.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  const body = req.body || {};
+  if (body.name !== undefined) data[idx].name = String(body.name).trim() || data[idx].name;
+  if (body.volume_ml !== undefined) data[idx].volume_ml = Math.max(0, Number(body.volume_ml) || 0);
+  writeJson('essential_oils.json', data);
+  res.json(data[idx]);
+});
+
+app.delete('/api/warehouse/essential-oils/:id', (req, res) => {
+  const data = readEssentialOils().filter((o) => o.id !== req.params.id);
+  writeJson('essential_oils.json', data);
+  const consumption = readOilConsumption();
+  Object.keys(consumption).forEach((offerId) => {
+    delete consumption[offerId][req.params.id];
+    if (Object.keys(consumption[offerId]).length === 0) delete consumption[offerId];
+  });
+  writeJson('oil_consumption.json', consumption);
+  res.json({ ok: true });
+});
+
+app.get('/api/warehouse/oil-consumption', (req, res) => {
+  res.json(readOilConsumption());
+});
+
+app.post('/api/warehouse/oil-consumption', (req, res) => {
+  const data = readOilConsumption();
+  const { offer_id, oil_id, ml_per_unit } = req.body || {};
+  const key = String(offer_id || '').trim();
+  if (!key) return res.status(400).json({ error: 'offer_id required' });
+  if (!data[key]) data[key] = {};
+  data[key][oil_id] = Math.max(0, Number(ml_per_unit) || 0);
+  if (data[key][oil_id] === 0) delete data[key][oil_id];
+  if (Object.keys(data[key]).length === 0) delete data[key];
+  writeJson('oil_consumption.json', data);
+  res.json(data);
+});
+
+/** Остатки масел: объём в наличии минус расход на размещённые заказы; «хватит на N шт» — минимум по артикулам, использующим это масло. */
+app.get('/api/warehouse/oils-remainder', (req, res) => {
+  const oils = readEssentialOils();
+  const consumption = readOilConsumption();
+  const postings = readJson('postings.json', []);
+  const products = readJson('products_cache.json', []);
+  const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
+  const byOfferId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.offer_id || ''), p]));
+  const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+
+  const usedByOil = {};
+  oils.forEach((o) => { usedByOil[o.id] = 0; });
+
+  const postingsToCount = Array.isArray(postings)
+    ? postings.filter((p) => p.products && p.products.length)
+    : [];
+  postingsToCount.forEach((p) => {
+    (p.products || []).forEach((it) => {
+      const offerId = (it.offer_id != null ? String(it.offer_id) : '') || (it.sku != null ? String(it.sku) : '');
+      const product = byOfferId.get(offerId) || byProductId.get(String(it.product_id || it.sku || ''));
+      const resolvedOffer = offerId || (product?.offer_id != null ? String(product.offer_id) : '');
+      const cons = consumption[resolvedOffer] || consumption[offerId] || {};
+      const qty = Number(it.quantity) || 1;
+      Object.keys(cons).forEach((oilId) => {
+        usedByOil[oilId] = (usedByOil[oilId] || 0) + (Number(cons[oilId]) || 0) * qty;
+      });
+    });
+  });
+
+  const result = oils.map((o) => {
+    const volume = Number(o.volume_ml) || 0;
+    const used = usedByOil[o.id] || 0;
+    const remaining = Math.max(0, volume - used);
+    let unitsCanMake = null;
+    Object.keys(consumption).forEach((offerId) => {
+      const ml = Number(consumption[offerId][o.id]) || 0;
+      if (ml <= 0) return;
+      const u = Math.floor(remaining / ml);
+      if (unitsCanMake == null || u < unitsCanMake) unitsCanMake = u;
+    });
+    return {
+      id: o.id,
+      name: o.name,
+      volume_ml: volume,
+      used,
+      remaining,
+      units_can_make: unitsCanMake,
+    };
+  });
+  res.json(result);
 });
 
 // ——— Costs (by-preset first: more specific route) ———
