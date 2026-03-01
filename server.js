@@ -191,15 +191,22 @@ app.get('/api/postings', async (req, res) => {
       filter.in_process_at_to = new Date().toISOString().slice(0, 19) + 'Z';
     }
     const list = await ozon.getPostingsList(filter);
+    const cached = readJson('postings.json', []);
+    const byNum = new Map(cached.map((p) => [String(p.posting_number || p.id), p]));
     const toD = (p) => (p.in_process_at || p.created_at || p.shipment_date || '').toString().slice(0, 10);
-    let out = list.map((p) => ({
-      posting_number: p.posting_number || p.id,
-      in_process_at: p.in_process_at,
-      created_at: p.created_at,
-      shipment_date: p.shipment_date,
-      status: p.status,
-      date: toD(p),
-    }));
+    let out = list.map((p) => {
+      const num = p.posting_number || p.id;
+      const rec = byNum.get(String(num));
+      return {
+        posting_number: num,
+        in_process_at: p.in_process_at,
+        created_at: p.created_at,
+        shipment_date: p.shipment_date,
+        status: p.status,
+        date: toD(p),
+        potential_amount: rec?.potential_amount != null ? rec.potential_amount : undefined,
+      };
+    });
     if (dateFrom) out = out.filter((p) => p.date >= dateFrom);
     if (dateTo) out = out.filter((p) => p.date <= dateTo);
     res.json(out);
@@ -263,6 +270,22 @@ app.post('/api/sales/sync', async (req, res) => {
     }
 
     const arr = Array.from(byId.values());
+
+    // Потенциальная сумма по недоставленным заказам (ожидание) — из деталей постинга
+    const awaitingType = 'Заказ (ожидание)';
+    for (const s of arr) {
+      const typeName = (s.operation_type_name || s.type || '').trim();
+      if (typeName !== awaitingType) continue;
+      const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
+      if (!postingNumber || !String(postingNumber).includes('-')) continue;
+      try {
+        const detail = await ozon.getPostingByNumber(postingNumber);
+        if (detail && Number(detail.sum) > 0) s.potential_amount = detail.sum;
+      } catch (e) {
+        // один сбой по одному постингу не ломаем весь синк
+      }
+    }
+
     writeJson('sales.json', arr);
 
     try {
@@ -271,10 +294,20 @@ app.post('/api/sales/sync', async (req, res) => {
       const postings = await ozon.getPostingsList({ in_process_at_from: since, in_process_at_to: to });
       const existingPostings = readJson('postings.json', []);
       const byPostingNum = new Map(existingPostings.map((p) => [String(p.posting_number || p.id), p]));
-      postings.forEach((p) => {
+      for (const p of postings) {
         const num = p.posting_number || p.id;
-        if (num) byPostingNum.set(String(num), { ...p, posting_number: num, date: (p.in_process_at || p.created_at || '').toString().slice(0, 10) });
-      });
+        if (!num) continue;
+        const existing = byPostingNum.get(String(num));
+        const rec = { ...p, posting_number: num, date: (p.in_process_at || p.created_at || '').toString().slice(0, 10) };
+        if (existing && existing.potential_amount != null) rec.potential_amount = existing.potential_amount;
+        else {
+          try {
+            const detail = await ozon.getPostingByNumber(num);
+            if (detail && Number(detail.sum) > 0) rec.potential_amount = detail.sum;
+          } catch (e) { /* ignore */ }
+        }
+        byPostingNum.set(String(num), rec);
+      }
       writeJson('postings.json', Array.from(byPostingNum.values()));
     } catch (postingErr) {
       console.error('postings sync (non-fatal):', postingErr.message);
@@ -513,6 +546,55 @@ app.post('/api/product-types', (req, res) => {
 });
 
 // ——— Costs (by-preset first: more specific route) ———
+/** Список товаров для привязки к типу (из кэша Ozon). */
+app.get('/api/costs/products', (req, res) => {
+  const products = readJson('products_cache.json', []);
+  res.json(Array.isArray(products) ? products : []);
+});
+
+app.get('/api/costs/consumables-remainder', (req, res) => {
+  const sales = readJson('sales.json', []);
+  const products = readJson('products_cache.json', []);
+  const productTypes = readJson('product_types.json', {});
+  const expenseItems = readJson('expense_items.json', []);
+  const expensePerPreset = readJson('expense_per_preset.json', {});
+  const byProductId = new Map((Array.isArray(products) ? products : []).map((p) => [String(p.product_id), p]));
+
+  const soldCountByPreset = {};
+  sales
+    .filter((s) => Number(s.amount ?? 0) > 0 && Array.isArray(s.items) && s.items.length)
+    .forEach((s) => {
+      (s.items || []).forEach((it) => {
+        const sku = it.sku != null ? String(it.sku) : '';
+        const product = byProductId.get(sku);
+        const offerId = product?.offer_id != null ? String(product.offer_id) : '';
+        const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
+        if (!presetId) return;
+        soldCountByPreset[presetId] = (soldCountByPreset[presetId] || 0) + (Number(it.quantity) || 1);
+      });
+    });
+
+  const result = expenseItems.map((e) => {
+    let consumed = 0;
+    Object.keys(expensePerPreset || {}).forEach((presetId) => {
+      const q = Number((expensePerPreset[presetId] || {})[e.id]) || 0;
+      const sold = soldCountByPreset[presetId] || 0;
+      consumed += q * sold;
+    });
+    const quantity = Number(e.quantity) || 0;
+    const remaining = Math.max(0, quantity - consumed);
+    return {
+      id: e.id,
+      name: e.name,
+      quantity,
+      consumed,
+      remaining,
+      unit: e.unit || 'шт',
+    };
+  });
+  res.json(result);
+});
+
 app.get('/api/costs/by-preset', (req, res) => {
   const expenseItems = readJson('expense_items.json', []);
   const expensePerPreset = readJson('expense_per_preset.json', {});
@@ -618,6 +700,15 @@ app.post('/api/ad-spend', (req, res) => {
 });
 
 // ——— Finance summary ———
+/** Типы операций, которые считаем рекламой (расходы на продвижение). */
+const REKLAMA_OPERATION_TYPES = new Set([
+  'Продвижение с оплатой за заказ',
+  'Оплата за клик',
+  'Рассылка пуш-уведомлений',
+  'Баллы за отзывы',
+  'Бонусы продавца',
+]);
+
 app.get('/api/finance-summary', (req, res) => {
   const dateFrom = req.query.date_from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const dateTo = req.query.date_to || new Date().toISOString().slice(0, 10);
@@ -628,6 +719,7 @@ app.get('/api/finance-summary', (req, res) => {
   const toDateStr = (v) => (v != null ? String(v).slice(0, 10) : '');
 
   let received = 0;
+  let ad_expenses = 0;
   let ozon_expenses = 0;
   const list = sales.filter((s) => {
     const d = toDateStr(s.date || s.operation_date || s.created_at);
@@ -635,8 +727,17 @@ app.get('/api/finance-summary', (req, res) => {
   });
   list.forEach((s) => {
     const amt = Number(overrides[s.transaction_id ?? s.id] ?? s.amount ?? 0);
-    if (amt > 0) received += amt;
-    else ozon_expenses += Math.abs(amt);
+    if (amt > 0) {
+      received += amt;
+    } else {
+      const absAmt = Math.abs(amt);
+      const typeName = (s.operation_type_name || s.type || '').trim();
+      if (REKLAMA_OPERATION_TYPES.has(typeName)) {
+        ad_expenses += absAmt;
+      } else {
+        ozon_expenses += absAmt;
+      }
+    }
   });
 
   const expenseItems = readJson('expense_items.json', []);
@@ -678,9 +779,10 @@ app.get('/api/finance-summary', (req, res) => {
   });
 
   const weeks = Math.max(1, (new Date(dateTo) - new Date(dateFrom)) / (7 * 24 * 60 * 60 * 1000));
-  const adTotal = (Number(adSpend.weekly_budget) || 0) * weeks + (Array.isArray(adSpend.one_time) ? adSpend.one_time.reduce((a, x) => a + (Number(x.amount) || 0), 0) : 0);
+  const adManual = (Number(adSpend.weekly_budget) || 0) * weeks + (Array.isArray(adSpend.one_time) ? adSpend.one_time.reduce((a, x) => a + (Number(x.amount) || 0), 0) : 0);
+  const ad_spend = ad_expenses + adManual;
   const taxes = Number(benchmarks.taxes) || 0;
-  const totalExpenses = adTotal + taxes + ozon_expenses + consumables;
+  const totalExpenses = ad_spend + taxes + ozon_expenses + consumables;
   const netProfit = received - totalExpenses;
 
   res.json({
@@ -688,10 +790,11 @@ app.get('/api/finance-summary', (req, res) => {
     date_to: dateTo,
     received,
     ozon_expenses,
+    ad_expenses,
     consumables,
     net_profit: netProfit,
     expenses: totalExpenses,
-    ad_spend: adTotal,
+    ad_spend,
     taxes,
     margin_percent: received ? ((netProfit / received) * 100).toFixed(1) : 0,
   });

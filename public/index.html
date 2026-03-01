@@ -26,20 +26,20 @@
     <section id="section-sales" class="section active">
       <div class="cards">
         <div class="card">
-          <span class="card-label">Получено <span class="tooltip-trigger" title="Сумма, которую Озон перевёл на ваш счёт за период">?</span></span>
-          <span class="card-value" id="card-received">—</span>
+          <span class="card-label">Получено</span>
+          <span class="card-value card-value-tooltip" id="card-received" title="Сумма, которую Озон перевёл на ваш счёт за период">—</span>
         </div>
         <div class="card">
-          <span class="card-label">Чистая прибыль <span class="tooltip-trigger" title="Деньги на счёте за вычетом рекламы, расходников и налогов">?</span></span>
-          <span class="card-value" id="card-net">—</span>
+          <span class="card-label">Чистая прибыль</span>
+          <span class="card-value card-value-tooltip" id="card-net" title="Деньги на счёте за вычетом рекламы, расходников и налогов">—</span>
         </div>
         <div class="card">
-          <span class="card-label">Расходы <span class="tooltip-trigger" title="Сумма всех расходов: комиссия и логистика Ozon, реклама, себестоимость">?</span></span>
-          <span class="card-value" id="card-expenses">—</span>
+          <span class="card-label">Расходы</span>
+          <span class="card-value card-value-tooltip" id="card-expenses" title="Сумма всех расходов: комиссия и логистика Ozon, реклама, себестоимость">—</span>
         </div>
         <div class="card">
-          <span class="card-label">Реклама <span class="tooltip-trigger" title="Расходы на рекламу: недельный бюджет и разовые кампании">?</span></span>
-          <span class="card-value" id="card-ad">—</span>
+          <span class="card-label">Реклама</span>
+          <span class="card-value card-value-tooltip" id="card-ad" title="Расходы на рекламу по типам операций и разовые кампании">—</span>
         </div>
       </div>
       <div class="toolbar">
@@ -54,10 +54,10 @@
         </div>
         <div class="actions">
           <button type="button" class="btn btn-primary" id="btn-sync-sales">Обновить продажи</button>
-          <span id="sync-sales-status" class="status-msg" aria-live="polite"></span>
           <button type="button" class="btn btn-secondary" id="btn-export-excel">Выгрузить в Excel</button>
         </div>
       </div>
+      <div id="toast-container" class="toast-container" aria-live="polite"></div>
       <div class="chart-block">
         <div class="chart-header">
           <h3>График</h3>
@@ -86,12 +86,12 @@
           </div>
         </div>
         <div class="margin-row">
-          <span>Маржинальность <span class="tooltip-trigger" title="Доля чистой прибыли в выручке после вычета рекламы, расходников и налогов">?</span></span>
-          <strong id="margin-value">— %</strong>
+          <span>Маржинальность</span>
+          <strong class="card-value-tooltip" id="margin-value" title="Доля чистой прибыли в выручке после вычета рекламы, расходников и налогов">— %</strong>
         </div>
       </div>
       <div class="table-block">
-        <h3>Продажи <span class="tooltip-trigger" title="Сумма, которую Озон реально перевёл на счёт по этой продаже; при необходимости укажите вручную">?</span></h3>
+        <h3>Продажи</h3>
         <div class="sales-view-toggle">
           <button type="button" class="btn btn-small toggle-view active" data-view="operations">По операциям</button>
           <button type="button" class="btn btn-small toggle-view" data-view="orders">По заказам</button>
@@ -143,7 +143,7 @@
         </div>
       </div>
       <div class="table-block">
-        <h3>Проданные товары <span class="tooltip-trigger" title="Список товаров из операций с положительной суммой">?</span></h3>
+        <h3>Проданные товары</h3>
         <div class="table-wrap">
           <table class="data-table" id="sold-goods-table">
             <thead>
@@ -163,18 +163,16 @@
 
     <!-- Себестоимость -->
     <section id="section-costs" class="section">
+      <div class="costs-toolbar">
+        <button type="button" class="btn btn-refresh-costs" id="btn-refresh-costs" title="Обновить товары с Ozon" aria-label="Обновить">↻</button>
+      </div>
       <div class="table-block">
-        <h3>Остатки избранных расходников <span class="tooltip-trigger" title="Помеченные звёздочкой расходники — остаток показывается здесь">?</span></h3>
+        <h3>Остатки избранных расходников</h3>
         <div id="starred-remainders" class="starred-remainders"></div>
       </div>
       <div class="table-block">
-        <h3>Титульные карточки (расходники по типам)</h3>
+        <h3>Себестоимость по типам товаров</h3>
         <div id="preset-cards"></div>
-      </div>
-      <div class="table-block">
-        <h3>Типы товаров (пресеты)</h3>
-        <button type="button" class="btn btn-primary btn-small" id="btn-add-preset">Добавить тип товара</button>
-        <ul id="preset-list" class="preset-list"></ul>
       </div>
       <div class="table-block">
         <h3>Расходники</h3>
@@ -206,6 +204,11 @@
         </div>
       </div>
       <div class="table-block">
+        <h3>Типы товаров (пресеты)</h3>
+        <button type="button" class="btn btn-primary btn-small" id="btn-add-preset">Добавить тип товара</button>
+        <ul id="preset-list" class="preset-list"></ul>
+      </div>
+      <div class="table-block">
         <h3>Привязка товаров к типу</h3>
         <div class="table-wrap">
           <table class="data-table" id="product-types-table">
@@ -221,17 +224,16 @@
       </div>
       <div class="table-block">
         <h3>Себестоимость и остатки</h3>
+        <p class="hint">Остатки расходников считаются от закупки минус расход на проданные товары (по привязке товаров к типам и расходу на тип).</p>
         <div class="table-wrap">
           <table class="data-table" id="costs-table">
             <thead>
               <tr>
-                <th data-sort="name">Товар</th>
-                <th>Тип</th>
-                <th data-sort="stock">Остаток</th>
-                <th data-sort="cost">Себестоимость (₽/шт)</th>
-                <th data-sort="total">Стоимость всего (₽)</th>
-                <th>Спрос (шт/день)</th>
-                <th>Хватит на (дней)</th>
+                <th>Расходник</th>
+                <th>Кол-во в закупке</th>
+                <th>Потрачено на проданные</th>
+                <th>Остаток</th>
+                <th>Ед. изм.</th>
               </tr>
             </thead>
             <tbody id="costs-tbody"></tbody>

@@ -2,6 +2,18 @@ const API = '/api';
 
 const DASHBOARD_STATE_KEY = 'ozon_dashboard_state';
 
+function showToast(message, type = 'success') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type === 'error' ? 'error' : 'success');
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.remove();
+  }, 4000);
+}
+
 function saveDashboardState() {
   try {
     const state = {
@@ -148,6 +160,7 @@ async function loadSales() {
       posting: { posting_number: num },
       amount: 0,
       actual_payout_rub: 0,
+      potential_amount: p.potential_amount != null ? Number(p.potential_amount) : 0,
       _is_posting_only: true,
     });
   });
@@ -272,23 +285,26 @@ function buildChart(sales) {
   sales.forEach((s) => {
     const d = (s.date || s.operation_date || s.created_at || '').slice(0, 10);
     if (!d) return;
-    if (!byDay[d]) byDay[d] = { date: d, received: 0, amount: 0, orders: 0 };
+    if (!byDay[d]) byDay[d] = { date: d, received: 0, amount: 0, orders: 0, potential: 0 };
     const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
     byDay[d].received += amt > 0 ? amt : 0;
     byDay[d].amount += Number(s.amount ?? 0);
     byDay[d].orders += 1;
+    byDay[d].potential += Number(s.potential_amount ?? 0);
   });
   const labels = Object.keys(byDay).sort();
   const receivedData = labels.map((d) => byDay[d].received);
   const amountData = labels.map((d) => byDay[d].amount);
   const ordersData = labels.map((d) => byDay[d].orders);
+  const potentialData = labels.map((d) => byDay[d].potential);
 
   const legendContainer = document.getElementById('chart-legend');
   if (!legendContainer) return;
   const datasets = [
-    { id: 'received', label: 'Фактически получено', data: receivedData, borderColor: '#27272a', backgroundColor: 'rgba(39,39,42,0.08)', hidden: false },
-    { id: 'amount', label: 'Сумма по Ozon', data: amountData, borderColor: '#71717a', backgroundColor: 'rgba(113,113,122,0.08)', hidden: false },
-    { id: 'orders', label: 'Заказов (в т.ч. ожидание)', data: ordersData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', hidden: false, yAxisID: 'y1' },
+    { id: 'received', label: 'Фактически получено', data: receivedData, borderColor: '#27272a', backgroundColor: 'rgba(39,39,42,0.08)', hidden: false, type: 'line' },
+    { id: 'amount', label: 'Сумма по Ozon', data: amountData, borderColor: '#71717a', backgroundColor: 'rgba(113,113,122,0.08)', hidden: false, type: 'line' },
+    { id: 'potential', label: 'Потенциальная прибыль', data: potentialData, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.08)', hidden: false, type: 'line' },
+    { id: 'orders', label: 'Заказов (шт)', data: ordersData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.35)', hidden: false, yAxisID: 'y1', type: 'bar' },
   ];
 
   legendContainer.innerHTML = datasets.map((d) => `<span data-id="${d.id}" class="chart-legend-item">${d.label}</span>`).join('');
@@ -301,6 +317,13 @@ function buildChart(sales) {
     });
   });
 
+  const allMoney = [...receivedData, ...amountData, ...potentialData].filter((v) => typeof v === 'number');
+  const minY = allMoney.length ? Math.min(0, ...allMoney) : 0;
+  const maxY = allMoney.length ? Math.max(0, ...allMoney) : 1;
+  const rangeY = maxY - minY || 1;
+  const maxY1 = Math.max(1, ...ordersData);
+  const minY1 = maxY1 * minY / rangeY;
+
   if (chartInstance) chartInstance.destroy();
   const chartEl = document.getElementById('chart');
   if (!chartEl) return;
@@ -309,11 +332,12 @@ function buildChart(sales) {
     data: {
       labels,
       datasets: datasets.map((d) => ({
+        type: d.type || 'line',
         label: d.label,
         data: d.data,
         borderColor: d.borderColor,
         backgroundColor: d.backgroundColor,
-        fill: true,
+        fill: d.type === 'line',
         yAxisID: d.yAxisID || 'y',
       })),
     },
@@ -322,8 +346,19 @@ function buildChart(sales) {
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        y: { position: 'left', beginAtZero: true, ticks: { callback: (v) => v + ' ₽' } },
-        y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, ticks: { callback: (v) => v + ' шт' } },
+        y: {
+          position: 'left',
+          min: minY,
+          max: maxY,
+          ticks: { callback: (v) => v + ' ₽' },
+        },
+        y1: {
+          position: 'right',
+          min: minY1,
+          max: maxY1,
+          grid: { drawOnChartArea: false },
+          ticks: { callback: (v) => v + ' шт' },
+        },
       },
     },
   });
@@ -351,19 +386,14 @@ async function loadSalesSection() {
 }
 
 document.getElementById('btn-sync-sales')?.addEventListener('click', async () => {
-  const statusEl = document.getElementById('sync-sales-status');
-  if (!statusEl) return;
-  statusEl.textContent = 'Загрузка…';
-  statusEl.classList.remove('error', 'success');
   const period = getPeriod();
+  showToast('Загрузка…');
   const res = await fetch(API + '/sales/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(period) }).then((r) => r.json()).catch((e) => ({ ok: false, error: e.message }));
   if (res.ok) {
-    statusEl.textContent = 'Загружено записей: ' + (res.count ?? 0);
-    statusEl.classList.add('success');
+    showToast('Загружено записей: ' + (res.count ?? 0));
     loadSalesSection();
   } else {
-    statusEl.textContent = res.error || res.hint || 'Ошибка синхронизации';
-    statusEl.classList.add('error');
+    showToast(res.error || res.hint || 'Ошибка синхронизации', 'error');
   }
 });
 
@@ -378,21 +408,26 @@ document.getElementById('btn-export-excel')?.addEventListener('click', () => {
 // ——— Costs section ———
 async function loadCostsSection() {
   try {
-  const r = await fetch(API + '/costs').then((x) => x.json()).catch(() => ({ items: [], total_value: 0 }));
-
   const expenses = await fetch(API + '/expense-items').then((x) => x.json()).catch(() => []);
+  const remainderList = await fetch(API + '/costs/consumables-remainder').then((x) => x.json()).catch(() => []);
+  const remainderById = new Map((remainderList || []).map((r) => [r.id, r]));
+
   const starred = expenses.filter((e) => e.starred);
   const starredEl = document.getElementById('starred-remainders');
   if (starredEl) {
     if (starred.length === 0) {
       starredEl.innerHTML = '<p class="hint">Пометьте расходники звёздочкой в таблице ниже — их остатки появятся здесь.</p>';
     } else {
-      starredEl.innerHTML = starred.map((e) => `
+      starredEl.innerHTML = starred.map((e) => {
+        const r = remainderById.get(e.id);
+        const rem = r ? r.remaining : (e.remaining != null && e.remaining !== '' ? Number(e.remaining) : null);
+        return `
         <div class="remainder-card">
           <div class="remainder-name">${e.name}</div>
-          <div class="remainder-value">${e.remaining != null && e.remaining !== '' ? Number(e.remaining) : '—'} ${e.unit || 'шт'}</div>
+          <div class="remainder-value">${rem != null ? rem : '—'} ${e.unit || 'шт'}</div>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
   }
 
@@ -422,17 +457,21 @@ async function loadCostsSection() {
 
   const tbody = document.getElementById('expense-tbody');
   if (!tbody) return;
-  tbody.innerHTML = expenses.map((e) => `
+  tbody.innerHTML = expenses.map((e) => {
+    const r = remainderById.get(e.id);
+    const remaining = r ? r.remaining : (e.remaining != null && e.remaining !== '' ? e.remaining : '—');
+    return `
     <tr>
       <td class="td-actions"><button type="button" class="expense-star ${e.starred ? 'starred' : ''}" data-id="${e.id}" aria-label="${e.starred ? 'Убрать из избранного' : 'Показать остаток наверху'}">${e.starred ? '★' : '☆'}</button></td>
       <td>${e.name}</td>
       <td>${e.cost}</td>
       <td>${e.quantity ?? 1}</td>
       <td>${e.unit || 'шт'}</td>
-      <td><input type="number" min="0" step="1" data-id="${e.id}" data-field="remaining" value="${e.remaining != null && e.remaining !== '' ? e.remaining : ''}" placeholder="—" style="width:70px"></td>
+      <td>${remaining}</td>
       <td class="td-actions"><button type="button" class="btn btn-small btn-secondary" data-delete-expense="${e.id}">Удалить</button></td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
   tbody.querySelectorAll('[data-delete-expense]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       await fetch(API + '/expense-items/' + btn.dataset.deleteExpense, { method: 'DELETE' });
@@ -444,15 +483,6 @@ async function loadCostsSection() {
       const e = expenses.find((x) => x.id === btn.dataset.id);
       if (!e) return;
       await fetch(API + '/expense-items/' + e.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ starred: !e.starred }) });
-      loadCostsSection();
-    });
-  });
-  tbody.querySelectorAll('input[data-field="remaining"]').forEach((inp) => {
-    inp.addEventListener('change', async () => {
-      const e = expenses.find((x) => x.id === inp.dataset.id);
-      if (!e) return;
-      const val = inp.value === '' ? null : parseFloat(inp.value);
-      await fetch(API + '/expense-items/' + e.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ remaining: val }) });
       loadCostsSection();
     });
   });
@@ -480,15 +510,20 @@ async function loadCostsSection() {
   }
 
   const types = await fetch(API + '/product-types').then((x) => x.json()).catch(() => ({}));
-  const costItems = r.items || [];
+  const productsForTypes = await fetch(API + '/costs/products').then((x) => x.json()).catch(() => []);
+  const costProducts = Array.isArray(productsForTypes) ? productsForTypes : [];
   const typesTbody = document.getElementById('product-types-tbody');
   if (typesTbody) {
-  typesTbody.innerHTML = costItems.map((i) => {
+  if (costProducts.length === 0) {
+    typesTbody.innerHTML = '<tr><td colspan="2" class="hint">Нажмите «Обновить» (↻) в правом верхнем углу, чтобы подтянуть товары с Ozon.</td></tr>';
+  } else {
+  typesTbody.innerHTML = costProducts.map((i) => {
     const key = i.offer_id || String(i.product_id);
     const current = types[i.offer_id] ?? types[String(i.product_id)];
+    const name = i.name || i.offer_id || i.product_id || '—';
     return `
     <tr>
-      <td>${i.name}</td>
+      <td>${name}</td>
       <td>
         <select data-key="${key}">
           <option value="">—</option>
@@ -509,31 +544,42 @@ async function loadCostsSection() {
     });
   });
   }
+  }
 
   const costsTbody = document.getElementById('costs-tbody');
   if (costsTbody) {
-  const defaultDemand = 1;
-  costsTbody.innerHTML = costItems.map((i) => {
-    const demand = defaultDemand;
-    const days = demand > 0 ? Math.floor(i.stock / demand) : '—';
-    return `
+  costsTbody.innerHTML = (remainderList || []).map((r) => `
     <tr>
-      <td>${i.name}</td>
-      <td>${i.type || '—'}</td>
-      <td>${i.stock}</td>
-      <td>${formatMoney(i.cost_per_unit)}</td>
-      <td>${formatMoney(i.total_cost)}</td>
-      <td><input type="number" min="0" step="0.1" value="${demand}" style="width:70px"></td>
-      <td>${days}</td>
+      <td>${r.name}</td>
+      <td>${r.quantity}</td>
+      <td>${r.consumed}</td>
+      <td>${r.remaining}</td>
+      <td>${r.unit}</td>
     </tr>
-  `;
-  }).join('');
+  `).join('');
   }
 
   } catch (err) {
     console.error('loadCostsSection error:', err);
   }
 }
+
+document.getElementById('btn-refresh-costs')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btn-refresh-costs');
+  if (btn) btn.disabled = true;
+  showToast('Загрузка товаров с Ozon…');
+  try {
+    const res = await fetch(API + '/products/sync', { method: 'POST' }).then((r) => r.json()).catch(() => ({}));
+    if (res.ok) {
+      showToast('Загружено товаров: ' + (res.count ?? 0));
+    } else {
+      showToast(res.error || 'Ошибка загрузки', 'error');
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  loadCostsSection();
+});
 
 // ——— Expense modal ———
 document.getElementById('btn-add-expense')?.addEventListener('click', () => {
