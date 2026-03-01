@@ -325,7 +325,7 @@ app.get('/api/sales/chart-data', (req, res) => {
         s.items.forEach((it) => {
           const sku = it.sku != null ? String(it.sku) : '';
           const product = byProductId.get(sku) || byOfferId.get(sku);
-          const offerId = product?.offer_id != null ? String(product.offer_id) : sku;
+          const offerId = (it.offer_id != null && it.offer_id !== '') ? String(it.offer_id) : (product?.offer_id != null ? String(product.offer_id) : sku);
           const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
           cost += (Number(it.quantity) || 1) * costPerUnit(presetId);
         });
@@ -559,24 +559,43 @@ app.post('/api/sales/sync', async (req, res) => {
       }
     }
 
-    // Состав заказа (items) для расчёта остатков расходников: у транзакций из API часто нет items — подтягиваем из постинга
+    // Состав заказа (items) для расчёта остатков расходников: подтягиваем из постинга или дополняем offer_id
     for (const s of arr) {
       const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
       if (!postingNumber || !String(postingNumber).includes('-')) continue;
       if (Number(s.amount ?? 0) <= 0) continue;
-      if (Array.isArray(s.items) && s.items.length) continue;
       try {
         const detail = await ozon.getPostingByNumber(postingNumber);
         const products = detail?.result?.products || [];
-        s.items = products.map((p) => {
-          const sku = p.product_id != null ? String(p.product_id) : (p.offer_id != null ? String(p.offer_id) : (p.sku != null ? String(p.sku) : ''));
-          return {
-            sku,
-            offer_id: p.offer_id != null ? String(p.offer_id) : '',
-            quantity: Number(p.quantity) || 1,
-            name: p.name,
-          };
-        }).filter((it) => it.sku !== '');
+        if (!Array.isArray(products) || !products.length) continue;
+        if (!Array.isArray(s.items) || !s.items.length) {
+          s.items = products.map((p) => {
+            const sku = p.product_id != null ? String(p.product_id) : (p.offer_id != null ? String(p.offer_id) : (p.sku != null ? String(p.sku) : ''));
+            return {
+              sku,
+              offer_id: p.offer_id != null ? String(p.offer_id) : '',
+              quantity: Number(p.quantity) || 1,
+              name: p.name,
+            };
+          }).filter((it) => it.sku !== '');
+        } else {
+          // Уже есть items (из API транзакций), но часто без offer_id — дополняем по sku из постинга
+          const bySku = new Map();
+          products.forEach((p) => {
+            const offerId = p.offer_id != null ? String(p.offer_id) : '';
+            const pid = p.product_id != null ? String(p.product_id) : '';
+            const sku = p.sku != null ? String(p.sku) : pid || offerId;
+            if (pid) bySku.set(pid, p);
+            if (sku) bySku.set(sku, p);
+            if (offerId) bySku.set(offerId, p);
+          });
+          s.items.forEach((it) => {
+            if (it.offer_id != null && it.offer_id !== '') return;
+            const sku = it.sku != null ? String(it.sku) : '';
+            const p = bySku.get(sku);
+            if (p) it.offer_id = p.offer_id != null ? String(p.offer_id) : '';
+          });
+        }
       } catch (e) {
         // не ломаем синк
       }
@@ -1214,7 +1233,7 @@ app.get('/api/finance-summary', (req, res) => {
     items.forEach((it) => {
       const sku = it.sku != null ? String(it.sku) : '';
       const product = byProductId.get(sku) || byOfferId.get(sku);
-      const offerId = product?.offer_id != null ? String(product.offer_id) : sku;
+      const offerId = (it.offer_id != null && it.offer_id !== '') ? String(it.offer_id) : (product?.offer_id != null ? String(product.offer_id) : sku);
       const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
       const qty = Number(it.quantity) || 1;
       consumables += qty * costPerUnit(presetId);
