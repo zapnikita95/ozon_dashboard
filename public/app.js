@@ -110,7 +110,8 @@ function getPeriod() {
 }
 
 // ——— Navigation ———
-document.querySelectorAll('.nav-item').forEach((btn) => {
+function bootstrap() {
+  document.querySelectorAll('.nav-item').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
     document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
@@ -155,6 +156,7 @@ document.querySelectorAll('.subnav-item').forEach((btn) => {
 let chartInstance = null;
 
 async function loadFinanceSummary() {
+  try {
   const { date_from, date_to } = getPeriod();
   const q = new URLSearchParams({ date_from, date_to });
   const r = await fetch(API + '/finance-summary?' + q).then((x) => x.json()).catch(() => ({}));
@@ -171,6 +173,9 @@ async function loadFinanceSummary() {
   set('pct-consumables', formatMoney(r.consumables));
   const barOzon = document.getElementById('bar-ozon');
   if (barOzon) barOzon.style.width = '100%';
+  } catch (e) {
+    console.error('loadFinanceSummary error:', e);
+  }
 }
 
 async function loadSales() {
@@ -228,7 +233,6 @@ async function loadSales() {
   bindTableSort('sales-table');
   const dateTh = document.querySelector('#sales-table thead th[data-sort="date"]');
   if (dateTh) dateTh.classList.add('sort-desc');
-  const { date_from, date_to } = getPeriod();
   const chartQ = new URLSearchParams({ date_from, date_to });
   let chartData = null;
   try {
@@ -241,7 +245,7 @@ async function loadSales() {
     buildChart(chartData && chartData.labels ? chartData : list);
   } catch (e) {
     console.error('buildChart error:', e);
-    buildChart(list);
+    if (typeof Chart !== 'undefined') buildChart(list);
   }
   loadSalesGroupedView();
   loadSoldGoods();
@@ -372,6 +376,10 @@ function bindSoldGoodsDeliveredFilter() {
 }
 
 function buildChart(data) {
+  if (typeof Chart === 'undefined') {
+    console.warn('Chart.js не загружен');
+    return;
+  }
   const isChartData = data && data.labels && Array.isArray(data.labels) && Array.isArray(data.received);
   let labels, receivedData, amountData, ordersBarsData, potentialData;
   if (isChartData) {
@@ -514,8 +522,13 @@ document.getElementById('date-from')?.addEventListener('change', () => { saveDas
 document.getElementById('date-to')?.addEventListener('change', () => { saveDashboardState(); loadSalesSection(); });
 
 async function loadSalesSection() {
-  await loadFinanceSummary();
-  await loadSales();
+  try {
+    await loadFinanceSummary();
+    await loadSales();
+  } catch (e) {
+    console.error('loadSalesSection error:', e);
+    showToast('Ошибка загрузки раздела', 'error');
+  }
 }
 
 document.getElementById('btn-sync-sales')?.addEventListener('click', async () => {
@@ -1003,8 +1016,8 @@ function formatMoney(v) {
   return new Intl.NumberFormat('ru-RU', { style: 'decimal', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n) + ' ₽';
 }
 
-// Init — не падаем, если что-то не загрузилось или элементов нет
-(function init() {
+// Init — после готовности DOM, чтобы кнопки и секции точно были в документе
+function runInit() {
   try {
     if (!restoreDashboardState()) setPeriodDates();
     saveDashboardState();
@@ -1044,4 +1057,11 @@ function formatMoney(v) {
   } catch (err) {
     console.error('Ozon Dashboard init error:', err);
   }
-})();
+}
+  runInit();
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootstrap);
+} else {
+  bootstrap();
+}
