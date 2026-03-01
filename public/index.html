@@ -430,6 +430,7 @@
       <h3>Добавить эфирное масло</h3>
       <form id="form-oil">
         <label>Название <input type="text" name="name" placeholder="Например: Лаванда" required></label>
+        <label>Дата покупки <input type="date" name="purchase_date" id="form-oil-purchase-date" required></label>
         <label>Объём в наличии (мл) <input type="number" name="volume_ml" min="0" step="0.1" required></label>
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
@@ -439,6 +440,22 @@
     </div>
   </div>
 
-  <script src="app.js?v=4"></script>
+  <div id="modal-oil-batch" class="modal" hidden>
+    <div class="modal-content">
+      <h3>Завоз эфирного масла</h3>
+      <p class="hint" id="modal-oil-batch-name"></p>
+      <form id="form-oil-batch">
+        <input type="hidden" name="oil_id" id="form-oil-batch-oil-id">
+        <label>Дата завоза <input type="date" name="purchase_date" id="form-oil-batch-purchase-date" required></label>
+        <label>Объём (мл) <input type="number" name="volume_ml" min="0" step="0.1" required></label>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" data-close-modal>Отмена</button>
+          <button type="submit" class="btn btn-primary">Добавить завоз</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js?v=5"></script>
 </body>
 </html>

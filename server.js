@@ -1216,14 +1216,35 @@ app.get('/api/warehouse/essential-oils', (req, res) => {
 app.post('/api/warehouse/essential-oils', (req, res) => {
   const data = readEssentialOils();
   const body = req.body || {};
+  const purchase_date = (body.purchase_date || new Date().toISOString().slice(0, 10)).toString().slice(0, 10);
+  const volume_ml = Math.max(0, Number(body.volume_ml) || 0);
   const item = {
     id: String(Date.now()),
     name: String(body.name || '').trim() || 'Масло',
-    volume_ml: Math.max(0, Number(body.volume_ml) || 0),
+    volume_ml,
+    purchase_date,
+    batches: [{ purchase_date, volume_ml }],
   };
   data.push(item);
   writeJson('essential_oils.json', data);
   res.json(item);
+});
+
+app.post('/api/warehouse/essential-oils/:id/batches', (req, res) => {
+  const data = readEssentialOils();
+  const id = req.params.id;
+  const idx = data.findIndex((o) => o.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  const body = req.body || {};
+  const purchase_date = (body.purchase_date || new Date().toISOString().slice(0, 10)).toString().slice(0, 10);
+  const volume_ml = Math.max(0, Number(body.volume_ml) || 0);
+  const oil = data[idx];
+  if (!Array.isArray(oil.batches)) oil.batches = [];
+  oil.batches.push({ purchase_date, volume_ml });
+  oil.volume_ml = (Number(oil.volume_ml) || 0) + volume_ml;
+  data[idx] = oil;
+  writeJson('essential_oils.json', data);
+  res.json(oil);
 });
 
 app.put('/api/warehouse/essential-oils/:id', (req, res) => {

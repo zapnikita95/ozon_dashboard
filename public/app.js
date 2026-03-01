@@ -965,7 +965,7 @@ async function loadWarehouseSection() {
           <td>${rem}</td>
           <td>${units}</td>
           <td class="td-actions">
-            <button type="button" class="btn btn-small btn-secondary" data-oil-edit="${o.id}" data-oil-name="${(o.name || '').replace(/"/g, '&quot;')}" data-oil-volume="${o.volume_ml}">Изменить</button>
+            <button type="button" class="btn btn-small btn-secondary" data-oil-batch="${o.id}" data-oil-name="${(o.name || '').replace(/"/g, '&quot;')}">+ Завоз</button>
             <button type="button" class="btn btn-small btn-secondary" data-oil-delete="${o.id}">Удалить</button>
           </td>
         </tr>
@@ -978,18 +978,20 @@ async function loadWarehouseSection() {
           loadWarehouseSection();
         });
       });
-      oilsTbody.querySelectorAll('[data-oil-edit]').forEach((btn) => {
+      oilsTbody.querySelectorAll('[data-oil-batch]').forEach((btn) => {
         btn.addEventListener('click', () => {
-          const id = btn.dataset.oilEdit;
+          const id = btn.dataset.oilBatch;
           const name = btn.dataset.oilName || '';
-          const volume = btn.dataset.oilVolume ?? '';
-          const form = document.getElementById('form-oil');
-          const modal = document.getElementById('modal-oil');
-          if (!form || !modal) return;
-          modal.dataset.editId = id;
-          form.name.value = name;
-          form.volume_ml.value = volume;
-          modal.querySelector('h3').textContent = 'Изменить эфирное масло';
+          const form = document.getElementById('form-oil-batch');
+          const modal = document.getElementById('modal-oil-batch');
+          const nameEl = document.getElementById('modal-oil-batch-name');
+          if (!form || !modal || !nameEl) return;
+          document.getElementById('form-oil-batch-oil-id').value = id;
+          nameEl.textContent = name ? `Масло: ${name}` : 'Завоз';
+          const today = new Date().toISOString().slice(0, 10);
+          const dateInp = document.getElementById('form-oil-batch-purchase-date');
+          if (dateInp) dateInp.value = today;
+          form.volume_ml.value = '';
           modal.hidden = false;
         });
       });
@@ -1108,9 +1110,10 @@ document.getElementById('btn-add-oil')?.addEventListener('click', () => {
   const form = document.getElementById('form-oil');
   const modal = document.getElementById('modal-oil');
   if (form && modal) {
-    delete modal.dataset.editId;
     modal.querySelector('h3').textContent = 'Добавить эфирное масло';
     form.reset();
+    const dateEl = document.getElementById('form-oil-purchase-date');
+    if (dateEl) dateEl.value = new Date().toISOString().slice(0, 10);
     modal.hidden = false;
   }
 });
@@ -1119,15 +1122,23 @@ document.getElementById('form-oil')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const name = (form.name && form.name.value || '').trim();
+  const purchase_date = (form.purchase_date && form.purchase_date.value || '').slice(0, 10);
   const volume_ml = parseFloat(form.volume_ml && form.volume_ml.value) || 0;
   const modal = document.getElementById('modal-oil');
-  const editId = modal && modal.dataset.editId;
-  if (editId) {
-    await fetch(API + '/warehouse/essential-oils/' + editId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, volume_ml }) });
-  } else {
-    await fetch(API + '/warehouse/essential-oils', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, volume_ml }) });
-  }
+  await fetch(API + '/warehouse/essential-oils', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, purchase_date, volume_ml }) });
   if (modal) modal.hidden = true;
+  loadWarehouseSection();
+});
+
+document.getElementById('form-oil-batch')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const oil_id = document.getElementById('form-oil-batch-oil-id')?.value || form.elements?.oil_id?.value;
+  const purchase_date = (form.purchase_date && form.purchase_date.value || '').slice(0, 10);
+  const volume_ml = parseFloat(form.volume_ml && form.volume_ml.value) || 0;
+  if (!oil_id) return;
+  await fetch(API + '/warehouse/essential-oils/' + encodeURIComponent(oil_id) + '/batches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purchase_date, volume_ml }) });
+  document.getElementById('modal-oil-batch').hidden = true;
   loadWarehouseSection();
 });
 
