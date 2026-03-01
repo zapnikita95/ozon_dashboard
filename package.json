@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "push-data-to-railway": "node scripts/push-data-to-railway.js"
   },
   "engines": {
     "node": ">=18"
