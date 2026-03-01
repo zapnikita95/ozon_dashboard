@@ -1045,31 +1045,13 @@ app.get('/api/sales/grouped', (req, res) => {
 });
 
 /** Список проданных товаров: дата, заказ, товар, sku, количество, ожидаемая стоимость, доставлено. Только реальные товары (не эквайринг и не прочие расходы). Данные из getSoldGoodsRows — тот же источник, что и график «Потенциальная прибыль». */
-app.get('/api/sales/sold-goods', async (req, res) => {
+app.get('/api/sales/sold-goods', (req, res) => {
   const sales = readJson('sales.json', []);
-  let postings = readJson('postings.json', []);
-  const cached = Array.isArray(postings) ? postings : [];
+  const postings = readJson('postings.json', []);
   const dateFrom = req.query.date_from || '';
   const dateTo = req.query.date_to || '';
-  try {
-    const toIso = (dateTo || new Date().toISOString().slice(0, 10)) + 'T23:59:59.999Z';
-    const fromIso = (dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)) + 'T00:00:00.000Z';
-    const fromOzon = await ozon.getPostingsListRange(fromIso, toIso);
-    if (Array.isArray(fromOzon) && fromOzon.length > 0) {
-      const byNum = new Map(cached.map((p) => [String(p.posting_number || p.id), p]));
-      postings = fromOzon.map((p) => {
-        const num = p.posting_number || p.id;
-        const rec = byNum.get(String(num));
-        return rec ? { ...p, ...rec, potential_amount: p.potential_amount ?? rec.potential_amount ?? rec.sum } : p;
-      });
-    }
-  } catch (e) {
-    console.error('sold-goods: fetch postings from Ozon:', e.message);
-    if (!Array.isArray(postings) || postings.length === 0) postings = cached;
-  }
-  if (!Array.isArray(postings)) postings = [];
   const deliveredFilter = (req.query.delivered || 'all').toLowerCase();
-  const result = getSoldGoodsRows(sales, postings, dateFrom, dateTo);
+  const result = getSoldGoodsRows(sales, Array.isArray(postings) ? postings : [], dateFrom, dateTo);
   let out = result;
   if (deliveredFilter === 'yes') out = result.filter((r) => r.delivered);
   else if (deliveredFilter === 'no') out = result.filter((r) => !r.delivered);
