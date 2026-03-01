@@ -8,7 +8,7 @@ const ozon = require('./lib/ozon');
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -179,6 +179,41 @@ app.get('/api/sales', (req, res) => {
   res.json(list);
 });
 
+app.get('/api/postings', async (req, res) => {
+  const dateFrom = req.query.date_from || '';
+  const dateTo = req.query.date_to || '';
+  try {
+    const filter = {};
+    if (dateFrom) filter.in_process_at_from = dateFrom + 'T00:00:00.000Z';
+    if (dateTo) filter.in_process_at_to = dateTo + 'T23:59:59.999Z';
+    if (!Object.keys(filter).length) {
+      filter.in_process_at_from = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
+      filter.in_process_at_to = new Date().toISOString().slice(0, 19) + 'Z';
+    }
+    const list = await ozon.getPostingsList(filter);
+    const toD = (p) => (p.in_process_at || p.created_at || p.shipment_date || '').toString().slice(0, 10);
+    let out = list.map((p) => ({
+      posting_number: p.posting_number || p.id,
+      in_process_at: p.in_process_at,
+      created_at: p.created_at,
+      shipment_date: p.shipment_date,
+      status: p.status,
+      date: toD(p),
+    }));
+    if (dateFrom) out = out.filter((p) => p.date >= dateFrom);
+    if (dateTo) out = out.filter((p) => p.date <= dateTo);
+    res.json(out);
+  } catch (e) {
+    console.error('api/postings:', e.message);
+    const cached = readJson('postings.json', []);
+    const toD = (v) => (v != null ? String(v).slice(0, 10) : '');
+    let out = cached;
+    if (dateFrom) out = out.filter((p) => toD(p.date || p.in_process_at || p.created_at) >= dateFrom);
+    if (dateTo) out = out.filter((p) => toD(p.date || p.in_process_at || p.created_at) <= dateTo);
+    res.json(out);
+  }
+});
+
 app.post('/api/sales/sync', async (req, res) => {
   try {
     const { date_from, date_to } = req.body || {};
@@ -229,6 +264,22 @@ app.post('/api/sales/sync', async (req, res) => {
 
     const arr = Array.from(byId.values());
     writeJson('sales.json', arr);
+
+    try {
+      const since = from + 'T00:00:00.000Z';
+      const to = to + 'T23:59:59.999Z';
+      const postings = await ozon.getPostingsList({ in_process_at_from: since, in_process_at_to: to });
+      const existingPostings = readJson('postings.json', []);
+      const byPostingNum = new Map(existingPostings.map((p) => [String(p.posting_number || p.id), p]));
+      postings.forEach((p) => {
+        const num = p.posting_number || p.id;
+        if (num) byPostingNum.set(String(num), { ...p, posting_number: num, date: (p.in_process_at || p.created_at || '').toString().slice(0, 10) });
+      });
+      writeJson('postings.json', Array.from(byPostingNum.values()));
+    } catch (postingErr) {
+      console.error('postings sync (non-fatal):', postingErr.message);
+    }
+
     res.json({ ok: true, count: arr.length });
   } catch (e) {
     console.error('sales/sync error:', e.message);

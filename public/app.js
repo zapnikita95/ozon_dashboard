@@ -1,5 +1,33 @@
 const API = '/api';
 
+const DASHBOARD_STATE_KEY = 'ozon_dashboard_state';
+
+function saveDashboardState() {
+  try {
+    const state = {
+      periodPreset: document.getElementById('period-preset')?.value,
+      dateFrom: document.getElementById('date-from')?.value,
+      dateTo: document.getElementById('date-to')?.value,
+    };
+    localStorage.setItem(DASHBOARD_STATE_KEY, JSON.stringify(state));
+  } catch (e) {}
+}
+
+function restoreDashboardState() {
+  try {
+    const raw = localStorage.getItem(DASHBOARD_STATE_KEY);
+    if (!raw) return false;
+    const state = JSON.parse(raw);
+    const presetEl = document.getElementById('period-preset');
+    const fromEl = document.getElementById('date-from');
+    const toEl = document.getElementById('date-to');
+    if (state.periodPreset && presetEl) presetEl.value = state.periodPreset;
+    if (state.dateFrom && fromEl) fromEl.value = state.dateFrom;
+    if (state.dateTo && toEl) toEl.value = state.dateTo;
+    return true;
+  } catch (e) { return false; }
+}
+
 function setPeriodDates() {
   const preset = document.getElementById('period-preset').value;
   const to = new Date();
@@ -86,8 +114,30 @@ async function loadSales() {
   if (date_from) q.set('date_from', date_from);
   if (date_to) q.set('date_to', date_to);
   const list = await fetch(API + '/sales?' + q).then((r) => r.json()).catch(() => []);
-  // Сверху самые свежие: сортируем по дате по убыванию
+  let postings = [];
+  try {
+    postings = await fetch(API + '/postings?' + q).then((r) => r.json()).catch(() => []);
+  } catch (e) {}
+  const transactionPostingNumbers = new Set(list.map((s) => (s.posting?.posting_number || s.posting?.number || '').toString()));
   const toD = (s) => (s.date || s.operation_date || s.created_at || '').slice(0, 10);
+  postings.forEach((p) => {
+    const num = (p.posting_number || p.id || '').toString();
+    if (!num || transactionPostingNumbers.has(num)) return;
+    const dateStr = (p.in_process_at || p.created_at || p.shipment_date || '').toString().slice(0, 10);
+    if (date_from && dateStr < date_from) return;
+    if (date_to && dateStr > date_to) return;
+    transactionPostingNumbers.add(num);
+    list.push({
+      date: dateStr,
+      operation_date: dateStr,
+      operation_type_name: 'Заказ (ожидание)',
+      type: 'posting',
+      posting: { posting_number: num },
+      amount: 0,
+      actual_payout_rub: 0,
+      _is_posting_only: true,
+    });
+  });
   list.sort((a, b) => (toD(b) || '').localeCompare(toD(a) || '', 'ru'));
   const tbody = document.getElementById('sales-tbody');
   tbody.innerHTML = list.map((s) => `
@@ -97,10 +147,10 @@ async function loadSales() {
       <td>${s.posting?.posting_number || s.posting?.number || s.operation_id || '—'}</td>
       <td>${formatMoney(s.amount)}</td>
       <td>${formatMoney(s.price || s.seller_price)}</td>
-      <td><input type="number" step="0.01" data-id="${s.transaction_id || s.id}" value="${s.actual_payout_rub ?? ''}" placeholder="вручную"></td>
+      <td><input type="number" step="0.01" data-id="${s.transaction_id || s.id}" value="${s.actual_payout_rub ?? ''}" placeholder="вручную" ${s._is_posting_only ? 'disabled' : ''}></td>
     </tr>
   `).join('');
-  tbody.querySelectorAll('input').forEach((inp) => {
+  tbody.querySelectorAll('input:not([disabled])').forEach((inp) => {
     inp.addEventListener('change', () => {
       const id = inp.dataset.id;
       const val = parseFloat(inp.value);
@@ -206,19 +256,22 @@ function buildChart(sales) {
   sales.forEach((s) => {
     const d = (s.date || s.operation_date || s.created_at || '').slice(0, 10);
     if (!d) return;
-    if (!byDay[d]) byDay[d] = { date: d, received: 0, amount: 0 };
+    if (!byDay[d]) byDay[d] = { date: d, received: 0, amount: 0, orders: 0 };
     const amt = Number(s.actual_payout_rub ?? s.amount ?? 0);
     byDay[d].received += amt > 0 ? amt : 0;
     byDay[d].amount += Number(s.amount ?? 0);
+    byDay[d].orders += 1;
   });
   const labels = Object.keys(byDay).sort();
   const receivedData = labels.map((d) => byDay[d].received);
   const amountData = labels.map((d) => byDay[d].amount);
+  const ordersData = labels.map((d) => byDay[d].orders);
 
   const legendContainer = document.getElementById('chart-legend');
   const datasets = [
     { id: 'received', label: 'Фактически получено', data: receivedData, borderColor: '#27272a', backgroundColor: 'rgba(39,39,42,0.08)', hidden: false },
     { id: 'amount', label: 'Сумма по Ozon', data: amountData, borderColor: '#71717a', backgroundColor: 'rgba(113,113,122,0.08)', hidden: false },
+    { id: 'orders', label: 'Заказов (в т.ч. ожидание)', data: ordersData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', hidden: false, yAxisID: 'y1' },
   ];
 
   legendContainer.innerHTML = datasets.map((d) => `<span data-id="${d.id}" class="chart-legend-item">${d.label}</span>`).join('');
@@ -236,14 +289,22 @@ function buildChart(sales) {
     type: 'line',
     data: {
       labels,
-      datasets: datasets.map((d) => ({ label: d.label, data: d.data, borderColor: d.borderColor, backgroundColor: d.backgroundColor, fill: true })),
+      datasets: datasets.map((d) => ({
+        label: d.label,
+        data: d.data,
+        borderColor: d.borderColor,
+        backgroundColor: d.backgroundColor,
+        fill: true,
+        yAxisID: d.yAxisID || 'y',
+      })),
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        y: { beginAtZero: true, ticks: { callback: (v) => v + ' ₽' } },
+        y: { position: 'left', beginAtZero: true, ticks: { callback: (v) => v + ' ₽' } },
+        y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, ticks: { callback: (v) => v + ' шт' } },
       },
     },
   });
@@ -259,10 +320,11 @@ document.getElementById('btn-download-chart').addEventListener('click', () => {
 
 document.getElementById('period-preset').addEventListener('change', () => {
   setPeriodDates();
+  saveDashboardState();
   loadSalesSection();
 });
-document.getElementById('date-from').addEventListener('change', () => { loadSalesSection(); });
-document.getElementById('date-to').addEventListener('change', () => { loadSalesSection(); });
+document.getElementById('date-from').addEventListener('change', () => { saveDashboardState(); loadSalesSection(); });
+document.getElementById('date-to').addEventListener('change', () => { saveDashboardState(); loadSalesSection(); });
 
 async function loadSalesSection() {
   await loadFinanceSummary();
@@ -337,13 +399,13 @@ async function loadCostsSection() {
   const tbody = document.getElementById('expense-tbody');
   tbody.innerHTML = expenses.map((e) => `
     <tr>
-      <td><button type="button" class="expense-star ${e.starred ? 'starred' : ''}" data-id="${e.id}" aria-label="${e.starred ? 'Убрать из избранного' : 'Показать остаток наверху'}">${e.starred ? '★' : '☆'}</button></td>
+      <td class="td-actions"><button type="button" class="expense-star ${e.starred ? 'starred' : ''}" data-id="${e.id}" aria-label="${e.starred ? 'Убрать из избранного' : 'Показать остаток наверху'}">${e.starred ? '★' : '☆'}</button></td>
       <td>${e.name}</td>
       <td>${e.cost}</td>
       <td>${e.quantity ?? 1}</td>
       <td>${e.unit || 'шт'}</td>
       <td><input type="number" min="0" step="1" data-id="${e.id}" data-field="remaining" value="${e.remaining != null && e.remaining !== '' ? e.remaining : ''}" placeholder="—" style="width:70px"></td>
-      <td><button type="button" class="btn btn-small btn-secondary" data-delete-expense="${e.id}">Удалить</button></td>
+      <td class="td-actions"><button type="button" class="btn btn-small btn-secondary" data-delete-expense="${e.id}">Удалить</button></td>
     </tr>
   `).join('');
   tbody.querySelectorAll('[data-delete-expense]').forEach((btn) => {
@@ -594,7 +656,8 @@ function formatMoney(v) {
 }
 
 // Init
-setPeriodDates();
+if (!restoreDashboardState()) setPeriodDates();
+saveDashboardState();
 loadSalesSection();
 bindTableSort('orders-table');
 bindTableSort('ad-codes-table');

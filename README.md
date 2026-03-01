@@ -18,8 +18,9 @@
 
 1. Подключите репозиторий к [Railway](https://railway.app), выберите этот проект.
 2. В настройках сервиса добавьте переменные окружения: `OZON_CLIENT_ID`, `OZON_API_KEY` (значения из .env).
-3. В разделе **Settings → Networking** нажмите **Generate Domain** — Railway выдаст публичный URL (например `https://ozon-dashboard-production.up.railway.app`).
-4. Сервис запускается командой из `Procfile`: `web: node server.js`. Порт берётся из `process.env.PORT`.
+3. **Чтобы расходники, пресеты и данные не пропадали после передеплоя** — добавьте том (Volume): в Railway в настройках сервиса создайте Volume и примонтируйте его, например, в `/data`. Затем добавьте переменную окружения **`DATA_DIR=/data`**. Все JSON-файлы (продажи, расходники, пресеты и т.д.) будут храниться на томе.
+4. В разделе **Settings → Networking** нажмите **Generate Domain** — Railway выдаст публичный URL.
+5. Сервис запускается командой из `Procfile`: `web: node server.js`. Порт берётся из `process.env.PORT`.
 
 ## Разделы
 
