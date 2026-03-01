@@ -443,6 +443,7 @@ app.post('/api/sales/sync', async (req, res) => {
           const sku = p.product_id != null ? String(p.product_id) : (p.offer_id != null ? String(p.offer_id) : (p.sku != null ? String(p.sku) : ''));
           return {
             sku,
+            offer_id: p.offer_id != null ? String(p.offer_id) : '',
             quantity: Number(p.quantity) || 1,
             name: p.name,
           };
@@ -456,8 +457,8 @@ app.post('/api/sales/sync', async (req, res) => {
 
     try {
       const since = from + 'T00:00:00.000Z';
-      const to = to + 'T23:59:59.999Z';
-      const postings = await ozon.getPostingsList({ in_process_at_from: since, in_process_at_to: to });
+      const toIso = to + 'T23:59:59.999Z';
+      const postings = await ozon.getPostingsList({ in_process_at_from: since, in_process_at_to: toIso });
       const existingPostings = readJson('postings.json', []);
       const byPostingNum = new Map(existingPostings.map((p) => [String(p.posting_number || p.id), p]));
       for (const p of postings) {
@@ -502,13 +503,13 @@ app.post('/api/sales/enrich-items', async (req, res) => {
       const postingNumber = s.posting?.posting_number || s.posting?.number || s.posting_number;
       if (!postingNumber || !String(postingNumber).includes('-')) continue;
       if (Number(s.amount ?? 0) <= 0) continue;
-      if (Array.isArray(s.items) && s.items.length) continue;
+      if (Array.isArray(s.items) && s.items.length && s.items.some((it) => it.offer_id != null && it.offer_id !== '')) continue;
       try {
         const detail = await ozon.getPostingByNumber(postingNumber);
         const products = detail?.result?.products || [];
         s.items = products.map((p) => {
           const sku = p.product_id != null ? String(p.product_id) : (p.offer_id != null ? String(p.offer_id) : (p.sku != null ? String(p.sku) : ''));
-          return { sku, quantity: Number(p.quantity) || 1, name: p.name };
+          return { sku, offer_id: p.offer_id != null ? String(p.offer_id) : '', quantity: Number(p.quantity) || 1, name: p.name };
         }).filter((it) => it.sku !== '');
         if (s.items.length) enriched++;
       } catch (e) {
@@ -851,8 +852,9 @@ app.get('/api/costs/consumables-remainder', (req, res) => {
     .forEach((s) => {
       (s.items || []).forEach((it) => {
         const sku = it.sku != null ? String(it.sku) : '';
-        const product = byProductId.get(sku) || byOfferId.get(sku);
-        const offerId = product?.offer_id != null ? String(product.offer_id) : sku;
+        const directOfferId = it.offer_id != null ? String(it.offer_id) : '';
+        const product = byProductId.get(sku) || byOfferId.get(sku) || (directOfferId ? byOfferId.get(directOfferId) : null);
+        const offerId = directOfferId || (product?.offer_id != null ? String(product.offer_id) : sku);
         const presetId = productTypes[offerId] ?? productTypes[sku] ?? '';
         if (!presetId) return;
         soldCountByPreset[presetId] = (soldCountByPreset[presetId] || 0) + (Number(it.quantity) || 1);

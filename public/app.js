@@ -174,10 +174,16 @@ async function loadFinanceSummary() {
   set('card-consumables', formatMoney(r.consumables));
   set('card-ad', formatMoney(r.ad_spend));
   set('margin-value', (r.margin_percent != null ? r.margin_percent : '—') + ' %');
-  set('pct-ozon', '100%');
   set('pct-consumables', formatMoney(r.consumables));
+  const totalGross = Number(r.total_gross) || 0;
+  const ozonPct = totalGross > 0 ? ((Number(r.ozon_expenses) || 0) / totalGross * 100).toFixed(1) : 0;
+  const adPct = totalGross > 0 ? ((Number(r.ad_expenses) || 0) / totalGross * 100).toFixed(1) : 0;
+  set('pct-ozon', ozonPct + '%');
+  set('pct-ad', adPct + '%');
   const barOzon = document.getElementById('bar-ozon');
-  if (barOzon) barOzon.style.width = '100%';
+  if (barOzon) barOzon.style.width = ozonPct + '%';
+  const barAd = document.getElementById('bar-ad');
+  if (barAd) barAd.style.width = adPct + '%';
   } catch (e) {
     console.error('loadFinanceSummary error:', e);
   }
@@ -876,7 +882,10 @@ async function loadStocks() {
   if (!tbody) return;
   const items = Array.isArray(list) ? list : [];
   tbody.innerHTML = items.map((s) => {
-    const stock = Number(s.stock ?? 0) + Number(s.reserved ?? 0);
+    const stockArr = Array.isArray(s.stocks) ? s.stocks : [];
+    const stock = stockArr.length
+      ? stockArr.reduce((acc, st) => acc + (Number(st.present) || 0) + (Number(st.reserved) || 0), 0)
+      : (Number(s.stock ?? 0) + Number(s.reserved ?? 0));
     const name = (byOffer.get(s.offer_id) || {}).name || s.offer_id || s.product_id;
     return `<tr>
       <td><input type="checkbox" class="stock-cb" data-product-id="${s.product_id}" data-offer-id="${s.offer_id}"></td>
