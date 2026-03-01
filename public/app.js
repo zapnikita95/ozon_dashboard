@@ -857,11 +857,11 @@ document.getElementById('btn-refresh-products')?.addEventListener('click', async
     const res = await fetch(API + '/products/sync', { method: 'POST' }).then((r) => r.json()).catch(() => ({}));
     if (res.ok) {
       showToast('Загружено товаров: ' + (res.count ?? 0) + '. Обновляю таблицы…');
-      await Promise.all([loadStocks(), loadPrices(), loadDescriptions()]);
-      showToast('Остатки и цены обновлены.');
     } else {
-      showToast(res.error || 'Ошибка загрузки', 'error');
+      showToast(res.error || 'Ошибка синка. Обновляю таблицы из кэша…', 'error');
     }
+    await Promise.all([loadStocks(), loadPrices(), loadDescriptions()]);
+    if (res.ok) showToast('Остатки и цены обновлены.');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -873,6 +873,7 @@ async function loadStocks() {
   const products = Array.isArray(productsRaw) ? productsRaw : [];
   const byOffer = new Map(products.map((p) => [p.offer_id, p]));
   const tbody = document.getElementById('stocks-tbody');
+  if (!tbody) return;
   const items = Array.isArray(list) ? list : [];
   tbody.innerHTML = items.map((s) => {
     const stock = Number(s.stock ?? 0) + Number(s.reserved ?? 0);
@@ -884,10 +885,11 @@ async function loadStocks() {
       <td><input type="number" min="0" class="stock-edit" data-product-id="${s.product_id}" data-offer-id="${s.offer_id}" value="${stock}" placeholder="${stock}" style="width:80px"></td>
     </tr>`;
   }).join('');
-  document.getElementById('stocks-select-all')?.addEventListener('change', (e) => {
-    tbody.querySelectorAll('.stock-cb').forEach((cb) => { cb.checked = e.target.checked; });
-  });
 }
+
+document.getElementById('stocks-select-all')?.addEventListener('change', (e) => {
+  document.querySelectorAll('#stocks-tbody .stock-cb').forEach((cb) => { cb.checked = e.target.checked; });
+});
 
 document.getElementById('btn-save-stocks')?.addEventListener('click', async () => {
   const items = [];
@@ -954,6 +956,7 @@ async function loadPrices() {
   const products = Array.isArray(productsRaw) ? productsRaw : [];
   const byOffer = new Map(products.map((p) => [p.offer_id, p]));
   const tbody = document.getElementById('prices-tbody');
+  if (!tbody) return;
   const list = Array.isArray(prices) ? prices : [];
   tbody.innerHTML = list.map((p) => {
     const price = p.price ?? p.old_price ?? '';
@@ -980,6 +983,7 @@ async function loadDescriptions() {
   const productsRaw = await apiGet('/products').catch(() => []);
   const products = Array.isArray(productsRaw) ? productsRaw : [];
   const tbody = document.getElementById('descriptions-tbody');
+  if (!tbody) return;
   if (!products.length) {
     tbody.innerHTML = '<tr><td colspan="2" class="hint">Нажмите «Обновить» (↻) в углу, чтобы подтянуть товары с Ozon.</td></tr>';
     return;

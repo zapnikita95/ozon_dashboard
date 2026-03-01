@@ -38,6 +38,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ——— Products ———
 app.get('/api/products', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const cached = readJson('products_cache.json', []);
+  if (Array.isArray(cached) && cached.length > 0) {
+    return res.json(cached);
+  }
   try {
     const list = await ozon.getProductList(1000);
     const items = list.result?.items || [];
@@ -45,7 +50,6 @@ app.get('/api/products', async (req, res) => {
     res.json(Array.isArray(items) ? items : []);
   } catch (e) {
     console.error('api/products:', e.message);
-    const cached = readJson('products_cache.json', []);
     res.status(200).json(Array.isArray(cached) ? cached : []);
   }
 });
@@ -62,6 +66,7 @@ app.post('/api/products/sync', async (req, res) => {
 
 // ——— Stocks ———
 app.get('/api/stocks', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const data = await ozon.getStocks({});
     const items = data.result?.items || [];
@@ -160,6 +165,7 @@ app.post('/api/stocks/update', async (req, res) => {
 
 // ——— Prices ———
 app.get('/api/prices', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const data = await ozon.getPrices({ filter: { visibility: 'ALL' }, limit: 1000 });
     const items = data.result?.items || [];
