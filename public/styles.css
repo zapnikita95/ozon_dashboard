@@ -329,8 +329,30 @@ h1, h2, h3, h4 {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
+.commission-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82rem;
+  color: var(--text-muted, #71717a);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.commission-input {
+  width: 56px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.82rem;
+  text-align: right;
+}
+.commission-input:focus { outline: 2px solid var(--accent); }
 .chart-header h3,
 .expense-structure h3,
 .table-block h3 {

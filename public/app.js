@@ -446,7 +446,7 @@ function buildChart(data) {
     return;
   }
   const isChartData = data && data.labels && Array.isArray(data.labels) && Array.isArray(data.received);
-  let labels, receivedData, amountData, ordersBarsData, potentialData;
+  let labels, receivedData, amountData, ordersBarsData, potentialData, actualProfitData;
   if (isChartData) {
     labels = Array.isArray(data.labels) ? data.labels : [];
     const n = labels.length;
@@ -454,6 +454,7 @@ function buildChart(data) {
     amountData = Array.isArray(data.expenses) && data.expenses.length === n ? data.expenses : labels.map(() => 0);
     ordersBarsData = Array.isArray(data.orders) && data.orders.length === n ? data.orders.map((v) => Math.max(0, Number(v) || 0)) : labels.map(() => 0);
     potentialData = Array.isArray(data.potential) && data.potential.length === n ? data.potential : labels.map(() => 0);
+    actualProfitData = Array.isArray(data.actual_profit) && data.actual_profit.length === n ? data.actual_profit : labels.map(() => 0);
   } else {
     const sales = Array.isArray(data) ? data : [];
     const byDay = {};
@@ -478,6 +479,7 @@ function buildChart(data) {
     amountData = labels.map((d) => byDay[d].amount);
     ordersBarsData = labels.map((d) => Math.max(0, (byDay[d].orderPostings && byDay[d].orderPostings.size) || 0));
     potentialData = labels.map((d) => byDay[d].potential);
+    actualProfitData = labels.map(() => 0);
   }
   const ordersData = ordersBarsData;
 
@@ -488,20 +490,41 @@ function buildChart(data) {
     { id: 'received', label: 'Фактически получено', data: receivedData, borderColor: '#27272a', backgroundColor: 'rgba(39,39,42,0.08)', hidden: false, type: 'line' },
     { id: 'amount', label: amountLabel, data: amountData, borderColor: '#71717a', backgroundColor: 'rgba(113,113,122,0.08)', hidden: false, type: 'line' },
     { id: 'potential', label: 'Потенциальная прибыль', data: potentialData, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.08)', hidden: false, type: 'line' },
-    { id: 'orders', label: 'Заказов (шт)', data: ordersBarsData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.35)', hidden: false, yAxisID: 'y1', type: 'bar' },
+    { id: 'actual_profit', label: 'Факт. прибыль (−ком.)', data: actualProfitData, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', hidden: false, type: 'line' },
+    { id: 'orders', label: 'Заказов (шт)', data: ordersBarsData, borderColor: '#84cc16', backgroundColor: 'rgba(132,204,22,0.35)', hidden: false, yAxisID: 'y1', type: 'bar' },
   ];
 
   legendContainer.innerHTML = datasets.map((d) => `<span data-id="${d.id}" class="chart-legend-item">${d.label}</span>`).join('');
-  legendContainer.querySelectorAll('.chart-legend-item').forEach((el, i) => {
+  const legendItems = Array.from(legendContainer.querySelectorAll('.chart-legend-item'));
+  legendItems.forEach((el, i) => {
     el.addEventListener('click', () => {
-      datasets[i].hidden = !datasets[i].hidden;
-      chartInstance.setDatasetVisibility(i, !datasets[i].hidden);
+      const isActive = !datasets[i].hidden;
+      const activeCount = datasets.filter((d) => !d.hidden).length;
+      if (isActive && activeCount > 1) {
+        // Соло-режим: оставить только этот, остальные скрыть
+        datasets.forEach((d, j) => {
+          d.hidden = j !== i;
+          chartInstance.setDatasetVisibility(j, j === i);
+          legendItems[j].classList.toggle('inactive', j !== i);
+        });
+      } else if (!isActive) {
+        // Добавить к видимым
+        datasets[i].hidden = false;
+        chartInstance.setDatasetVisibility(i, true);
+        el.classList.remove('inactive');
+      } else {
+        // Единственный активный — сбросить всё, показать все
+        datasets.forEach((d, j) => {
+          d.hidden = false;
+          chartInstance.setDatasetVisibility(j, true);
+          legendItems[j].classList.remove('inactive');
+        });
+      }
       chartInstance.update();
-      el.classList.toggle('inactive', datasets[i].hidden);
     });
   });
 
-  const allMoney = [...receivedData, ...amountData, ...potentialData].filter((v) => typeof v === 'number');
+  const allMoney = [...receivedData, ...amountData, ...potentialData, ...actualProfitData].filter((v) => typeof v === 'number');
   const minY = allMoney.length ? Math.min(0, ...allMoney) : 0;
   const maxY = allMoney.length ? Math.max(0, ...allMoney) : 1;
   const rangeY = maxY - minY || 1;
@@ -594,6 +617,7 @@ document.getElementById('date-to')?.addEventListener('change', () => { saveDashb
 
 async function loadSalesSection() {
   try {
+    await loadOzonCommission();
     await loadFinanceSummary();
     await loadSales();
     updateOrdersInDelivery();
@@ -603,6 +627,29 @@ async function loadSalesSection() {
     updateOrdersInDelivery();
   }
 }
+
+async function loadOzonCommission() {
+  const inp = document.getElementById('ozon-commission-input');
+  if (!inp || inp.dataset.loaded) return;
+  try {
+    const s = await fetch(API + '/settings').then((r) => r.json()).catch(() => ({ ozon_commission: 53 }));
+    inp.value = s.ozon_commission ?? 53;
+    inp.dataset.loaded = '1';
+  } catch {}
+}
+
+document.getElementById('ozon-commission-input')?.addEventListener('change', async function () {
+  const val = Math.max(0, Math.min(100, parseFloat(this.value) || 0));
+  this.value = val;
+  await fetch(API + '/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ozon_commission: val }),
+  }).catch(() => {});
+  // Перестроить график с новой комиссией
+  document.getElementById('ozon-commission-input').dataset.loaded = '';
+  loadSales();
+});
 
 async function updateOrdersInDelivery() {
   const el = document.getElementById('header-orders-in-delivery');

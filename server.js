@@ -386,6 +386,24 @@ app.get('/api/sales/chart-data', (req, res) => {
     byDay[d].potential += expected_cost;
   });
 
+  // Фактическая прибыль = potential_amount * (1 - commission/100) для доставленных заказов.
+  // Дата = дата заказа (posting.date), чтобы совпадать с осью графика.
+  const settings = readJson('settings.json', { ozon_commission: 53 });
+  const commission = Math.max(0, Math.min(100, Number(settings.ozon_commission ?? 53) || 53));
+  const actualProfitByDay = {};
+  postings.forEach((p) => {
+    if ((p.status || '') !== 'delivered') return;
+    const d = toD(p.date || p.in_process_at || p.created_at);
+    if (!d) return;
+    if (dateFrom && d < dateFrom) return;
+    if (dateTo && d > dateTo) return;
+    const potential = Number(p.potential_amount ?? 0);
+    if (potential <= 0) return;
+    const profit = Math.round(potential * (1 - commission / 100));
+    actualProfitByDay[d] = (actualProfitByDay[d] || 0) + profit;
+    if (!byDay[d]) byDay[d] = { received: 0, ozon_expenses: 0, consumables: 0, orderPostings: new Set(), potential: 0 };
+  });
+
   const orderCountByDay = {};
   postings.forEach((p) => {
     const d = toD(p.date || p.in_process_at || p.shipment_date || p.created_at);
@@ -396,7 +414,7 @@ app.get('/api/sales/chart-data', (req, res) => {
     if (num && String(num).includes('-')) orderCountByDay[d] = (orderCountByDay[d] || 0) + 1;
   });
 
-  const allDays = new Set([...Object.keys(byDay), ...Object.keys(orderCountByDay)]);
+  const allDays = new Set([...Object.keys(byDay), ...Object.keys(orderCountByDay), ...Object.keys(actualProfitByDay)]);
   const labels = Array.from(allDays).sort();
   res.json({
     labels,
@@ -404,7 +422,24 @@ app.get('/api/sales/chart-data', (req, res) => {
     expenses: labels.map((d) => (byDay[d] ? byDay[d].ozon_expenses + byDay[d].consumables : 0)),
     orders: labels.map((d) => orderCountByDay[d] || 0),
     potential: labels.map((d) => (byDay[d] && byDay[d].potential) || 0),
+    actual_profit: labels.map((d) => actualProfitByDay[d] ? Math.round(actualProfitByDay[d]) : 0),
+    commission,
   });
+});
+
+/** Настройки приложения (комиссия Ozon и пр.) */
+app.get('/api/settings', (req, res) => {
+  const settings = readJson('settings.json', { ozon_commission: 53 });
+  if (settings.ozon_commission == null) settings.ozon_commission = 53;
+  res.json(settings);
+});
+
+app.put('/api/settings', (req, res) => {
+  const current = readJson('settings.json', { ozon_commission: 53 });
+  const updated = { ...current, ...req.body };
+  if (updated.ozon_commission != null) updated.ozon_commission = Math.max(0, Math.min(100, Number(updated.ozon_commission) || 0));
+  writeJson('settings.json', updated);
+  res.json(updated);
 });
 
 /** Для проверки: детали отправления и рассчитанная сумма (potential). Пример: GET /api/posting/77031757-0172-1 */
@@ -1709,22 +1744,24 @@ async function startupSync() {
       if (!num) continue;
       const cached = byNumExisting.get(String(num));
 
-      // potential_amount: из кэша (если уже есть), из financial_data Ozon, иначе из продуктов листа
-      let potential_amount = cached?.potential_amount ?? null;
+      // potential_amount: ВСЕГДА пересчитываем из свежих данных Ozon (иначе неправильный кэш застывает).
+      // Приоритет: financial_data.products (официальные суммы) → p.products * quantity → кэш (последний резерв)
+      let potential_amount = null;
+      const fd = p.financial_data;
+      if (fd) {
+        const fdSum = Number(fd.products?.reduce?.((a, x) => a + (Number(x.price ?? 0) * (Number(x.quantity) || 1)), 0) ?? 0);
+        if (fdSum > 0) potential_amount = fdSum;
+      }
       if (!potential_amount || potential_amount <= 0) {
-        // financial_data.posting_services.marketplace_service_item_fulfillment — нет, нужна сумма товара
-        const fd = p.financial_data;
-        if (fd) {
-          const fdSum = Number(fd.products?.reduce?.((a, x) => a + (Number(x.price ?? 0) * (Number(x.quantity) || 1)), 0) ?? 0);
-          if (fdSum > 0) potential_amount = fdSum;
+        const prods = Array.isArray(p.products) ? p.products : [];
+        if (prods.length > 0) {
+          const sum = prods.reduce((acc, x) => acc + (Number(x.price ?? x.sum_price ?? 0) || 0) * (Number(x.quantity) || 1), 0);
+          if (sum > 0) potential_amount = sum;
         }
-        if (!potential_amount || potential_amount <= 0) {
-          const prods = Array.isArray(p.products) ? p.products : [];
-          if (prods.length > 0) {
-            const sum = prods.reduce((acc, x) => acc + (Number(x.price ?? x.sum_price ?? 0) || 0) * (Number(x.quantity) || 1), 0);
-            if (sum > 0) potential_amount = sum;
-          }
-        }
+      }
+      // Только если Ozon вообще не вернул цены — берём из кэша
+      if ((!potential_amount || potential_amount <= 0) && cached?.potential_amount > 0) {
+        potential_amount = cached.potential_amount;
       }
 
       const rec = {

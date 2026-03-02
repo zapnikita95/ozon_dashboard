@@ -76,6 +76,10 @@
       <div class="chart-block">
         <div class="chart-header">
           <h3>График</h3>
+          <label class="commission-label">
+            Комиссия Ozon:
+            <input type="number" id="ozon-commission-input" class="commission-input" min="0" max="100" step="0.1" value="53" title="% комиссии Ozon вычитается из potential_amount для расчёта фактической прибыли">%
+          </label>
           <button type="button" class="btn btn-small" id="btn-download-chart">Скачать график</button>
         </div>
         <div class="chart-legend" id="chart-legend"></div>
